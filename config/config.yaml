@@ -1,12 +1,13 @@
 training: !!bool "true"
+# training: !!bool "false"
 device: "cuda"
-unprocessed_data: './TIMIT/*/*/*/*.wav'
+unprocessed_data: 'SLURM_TMPDIR/data/*/*/*/*.wav'
 ---
 data:
-    train_path: './train_tisv'
-    train_path_unprocessed: './TIMIT/TRAIN/*/*/*.wav'
-    test_path: './test_tisv'
-    test_path_unprocessed: './TIMIT/TEST/*/*/*.wav'
+    train_path: 'SLURM_TMPDIR/train_tisv'
+    train_path_unprocessed: 'SLURM_TMPDIR/data/TRAIN/*/*/*.wav'
+    test_path: 'SLURM_TMPDIR/test_tisv'
+    test_path_unprocessed: 'SLURM_TMPDIR/data/TEST/*/*/*.wav'
     data_preprocessed: !!bool "true" 
     sr: 16000
     nfft: 512 #For mel spectrogram preprocess
@@ -14,12 +15,15 @@ data:
     hop: 0.01 #(s)
     nmels: 40 #Number of mel energies
     tisv_frame: 180 #Max number of time steps in input after preprocess
+    alpha: 0.5 #for mixing
 ---   
 model:
     hidden: 768 #Number of LSTM hidden layer units
     num_layer: 3 #Number of LSTM layers
     proj: 256 #Embedding size
-    model_path: './model.model' #Model path for testing, inference, or resuming training
+    model_path: 'SLURM_TMPDIR/model.model' #Model path for testing, inference, or resuming training
+    # model_path: 'SLURM_TMPDIR/speech_mix_id_checkpoint/final_epoch_950_batch_id_141.model'
+    # model_path: 'speech_id_checkpoint/final_epoch_950_batch_id_141.model'
 ---
 train:
     N : 4 #Number of speakers in batch
@@ -28,13 +32,13 @@ train:
     lr: 0.01 
     epochs: 950 #Max training speaker epoch 
     log_interval: 30 #Epochs before printing progress
-    log_file: './speech_id_checkpoint/Stats'
+    log_file: 'SLURM_TMPDIR/speech_mix_id_checkpoint/Stats'
     checkpoint_interval: 120 #Save model after x speaker epochs
-    checkpoint_dir: './speech_id_checkpoint'
+    checkpoint_dir: 'SLURM_TMPDIR/speech_mix_id_checkpoint'
     restore: !!bool "false" #Resume training from previous model path
 ---
 test:
     N : 4 #Number of speakers in batch
     M : 6 #Number of utterances per speaker
-    num_workers: 8 #number of workers for data laoder
+    num_workers: 1 #number of workers for data laoder
     epochs: 10 #testing speaker epochs
