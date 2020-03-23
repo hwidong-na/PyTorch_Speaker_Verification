@@ -71,23 +71,25 @@ def get_cossim_prior(embeddings, centroids):
 
 def get_cossim(embeddings, centroids):
     # number of utterances per speaker
-    num_utterances = embeddings.shape[1]
+    # shape(embeddings) = [n_spk, n_utt, n_dim]
+    # shape(centroids) = [n_spk, n_dim]
+    n_spk = embeddings.shape[0]
+    n_utt = embeddings.shape[1]
+    n_dim = embeddings.shape[2]
+    # shape(utterance_centroids) = [n_spk, n_utt, n_dim]
     utterance_centroids = get_utterance_centroids(embeddings)
 
     # flatten the embeddings and utterance centroids to just utterance,
     # so we can do cosine similarity
-    utterance_centroids_flat = utterance_centroids.view(
-        utterance_centroids.shape[0] * utterance_centroids.shape[1],
-        -1
-    )
-    embeddings_flat = embeddings.view(
-        embeddings.shape[0] * num_utterances,
-        -1
-    )
+    # utterance_centroids.shape = (n_spk*n_utt, n_dim)
+    utterance_centroids_flat = utterance_centroids.view(n_spk*n_utt, n_dim)
+    # embeddings_flat.shape = (n_spk*n_utt, n_dim)
+    embeddings_flat = embeddings.view(n_spk*n_utt, n_dim)
     # the cosine distance between utterance and the associated centroids
     # for that utterance
     # this is each speaker's utterances against his own centroid, but each
     # comparison centroid has the current utterance removed
+    # cos_same.shape = (n_spk, n_utt)
     cos_same = F.cosine_similarity(embeddings_flat, utterance_centroids_flat)
 
     # now we get the cosine distance between each utterance and the other speakers'
@@ -96,21 +98,18 @@ def get_cossim(embeddings, centroids):
     # operation fast, we vectorize by using matrices L (embeddings) and
     # R (centroids) where L has each utterance repeated sequentially for all
     # comparisons and R has the entire centroids frame repeated for each utterance
-    centroids_expand = centroids.repeat((num_utterances * embeddings.shape[0], 1))
-    embeddings_expand = embeddings_flat.unsqueeze(1).repeat(1, embeddings.shape[0], 1)
-    embeddings_expand = embeddings_expand.view(
-        embeddings_expand.shape[0] * embeddings_expand.shape[1],
-        embeddings_expand.shape[-1]
-    )
+    #centroids_expand.shape = [n_spk*n_utt*n_spk, n_dim]
+    centroids_expand = centroids.repeat((n_utt*n_spk, 1))
+    #embedding_expand.shape = [n_spk*n_utt*n_spk, n_dim]
+    embeddings_expand = embeddings_flat.unsqueeze(1).repeat((1, n_spk, 1))
+    embeddings_expand = embeddings_expand.view(n_spk*n_utt*n_spk, n_dim)
+    # cos_diff.shape = (n_spk, n_utt, n_spk)
     cos_diff = F.cosine_similarity(embeddings_expand, centroids_expand)
-    cos_diff = cos_diff.view(
-        embeddings.size(0),
-        num_utterances,
-        centroids.size(0)
-    )
+    cos_diff = cos_diff.view(n_spk, n_utt, n_spk)
     # assign the cosine distance for same speakers to the proper idx
-    same_idx = list(range(embeddings.size(0)))
-    cos_diff[same_idx, :, same_idx] = cos_same.view(embeddings.shape[0], num_utterances)
+    same_idx = list(range(n_spk))
+    cos_diff[same_idx, :, same_idx] = cos_same.view(n_spk, n_utt)
+    # do we need?
     cos_diff = cos_diff + 1e-6
     return cos_diff
 
@@ -128,6 +127,21 @@ def calc_loss(sim_matrix):
     pos = sim_matrix[same_idx, :, same_idx]
     neg = (torch.exp(sim_matrix).sum(dim=2) + 1e-6).log_()
     per_embedding_loss = -1 * (pos - neg)
+    loss = per_embedding_loss.sum()
+    return loss, per_embedding_loss
+
+def calc_contrast_loss(sim_matrix):
+    n_spk = sim_matrix.size(0)
+    n_utt = sim_matrix.size(1)
+    same_idx = list(range(n_spk))
+    # pos.shape = (n_spk, n_utt)
+    pos = 1 - torch.sigmoid(sim_matrix[same_idx, :, same_idx])
+    # mask.shape = (n_spk, n_utt, n_spk)
+    mask = torch.diag(torch.ones(n_spk, dtype=torch.long)).unsqueeze(1).repeat((1, n_utt, 1))
+    sim_matrix[mask] = -1e+6
+    # neg.shape = (n_spk, n_utt)
+    neg, idx = torch.max(torch.sigmoid(sim_matrix), dim=2)
+    per_embedding_loss = pos + neg
     loss = per_embedding_loss.sum()
     return loss, per_embedding_loss
 

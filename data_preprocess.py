@@ -1,30 +1,29 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-#Modified from https://github.com/JanhHyun/Speaker_Verification
+#Modified from https://github.com/HarryVolek/Speaker_Verification
 import glob
 import os
 import librosa
 import numpy as np
+import random
 from hparam import hparam as hp
 
-# downloaded dataset path
-audio_path = glob.glob(os.path.dirname(hp.unprocessed_data))                                        
-
-def save_spectrogram_tisv():
+def save_spectrogram_tisv(input_path, output_path, train=True):
     """ Full preprocess of text independent utterance. The log-mel-spectrogram is saved as numpy file.
         Each partial utterance is splitted by voice detection using DB
         and the first and the last 180 frames from each partial utterance are saved. 
         Need : utterance data set (VTCK)
     """
     print("start text independent utterance feature extraction")
-    os.makedirs(hp.data.train_path, exist_ok=True)   # make folder to save train file
-    os.makedirs(hp.data.test_path, exist_ok=True)    # make folder to save test file
+    audio_path = glob.glob(os.path.dirname(input_path))
+    os.makedirs(output_path, exist_ok=True)   # make folder to save file
 
-    utter_min_len = (hp.data.tisv_frame * hp.data.hop + hp.data.window) * hp.data.sr    # lower bound of utterance length
+    utter_min_len = (hp.data.tisv_frame_min * hp.data.hop + hp.data.window) * hp.data.sr    # lower bound of utterance length
     total_speaker_num = len(audio_path)
     train_speaker_num= (total_speaker_num//10)*9            # split total data 90% train and 10% test
+    low = hp.data.tisv_frame_min
+    high = hp.data.tisv_frame_max
     print("total speaker number : %d"%total_speaker_num)
-    print("train : %d, test : %d"%(train_speaker_num, total_speaker_num-train_speaker_num))
     for i, folder in enumerate(audio_path):
         print("%dth speaker processing..."%i)
         utterances_spec = []
@@ -48,11 +47,8 @@ def save_spectrogram_tisv():
 
         utterances_spec = np.array(utterances_spec)
         print(utterances_spec.shape)
-        if i<train_speaker_num:      # save spectrogram as numpy file
-            np.save(os.path.join(hp.data.train_path, "speaker%d.npy"%i), utterances_spec)
-        else:
-            np.save(os.path.join(hp.data.test_path, "speaker%d.npy"%(i-train_speaker_num)), utterances_spec)
-
+        np.save(os.path.join(output_path, "speaker%d.npy"%i), utterances_spec)
 
 if __name__ == "__main__":
-    save_spectrogram_tisv()
+    save_spectrogram_tisv(hp.data.train_path_unprocessed, hp.data.train_path, True)
+    save_spectrogram_tisv(hp.data.test_path_unprocessed, hp.data.test_path, False)
