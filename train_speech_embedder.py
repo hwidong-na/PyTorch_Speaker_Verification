@@ -76,14 +76,14 @@ def train(model_path):
                     
         if hp.train.checkpoint_dir is not None and (e + 1) % hp.train.checkpoint_interval == 0:
             embedder_net.eval().cpu()
-            ckpt_model_filename = "ckpt_epoch_" + str(e+1) + "_batch_id_" + str(batch_id+1) + ".pth"
+            ckpt_model_filename = "ckpt_epoch_" + str(e+1) + ".pth"
             ckpt_model_path = os.path.join(hp.train.checkpoint_dir, ckpt_model_filename)
             torch.save(embedder_net.state_dict(), ckpt_model_path)
             embedder_net.to(device).train()
 
     #save model
     embedder_net.eval().cpu()
-    save_model_filename = "final_epoch_" + str(e + 1) + "_batch_id_" + str(batch_id + 1) + ".model"
+    save_model_filename = "final_epoch_" + str(e + 1) + ".model"
     save_model_path = os.path.join(hp.train.checkpoint_dir, save_model_filename)
     torch.save(embedder_net.state_dict(), save_model_path)
     
@@ -105,11 +105,12 @@ def test(model_path):
     for e in range(hp.test.epochs):
         batch_avg_EER = 0
         for batch_id, mel_db_batch in enumerate(test_loader):
-            assert hp.test.M % 2 == 0
-            enrollment_batch, verification_batch = torch.split(mel_db_batch, int(mel_db_batch.size(1)/2), dim=1)
+            #k-shot test
+            enrollment_batch, verification_batch = mel_db_batch[:,:hp.test.K,:,:], mel_db_batch[:,hp.test.K:,:,:]
             
-            enrollment_batch = torch.reshape(enrollment_batch, (hp.test.N*hp.test.M//2, enrollment_batch.size(2), enrollment_batch.size(3)))
-            verification_batch = torch.reshape(verification_batch, (hp.test.N*hp.test.M//2, verification_batch.size(2), verification_batch.size(3)))
+            MminusK = hp.test.M-hp.test.K
+            enrollment_batch = torch.reshape(enrollment_batch, (hp.test.N*hp.test.K, enrollment_batch.size(2), enrollment_batch.size(3)))
+            verification_batch = torch.reshape(verification_batch, (hp.test.N*MminusK, verification_batch.size(2), verification_batch.size(3)))
             
             perm = random.sample(range(0,verification_batch.size(0)), verification_batch.size(0))
             unperm = list(perm)
@@ -121,8 +122,8 @@ def test(model_path):
             verification_embeddings = embedder_net(verification_batch)
             verification_embeddings = verification_embeddings[unperm]
             
-            enrollment_embeddings = torch.reshape(enrollment_embeddings, (hp.test.N, hp.test.M//2, enrollment_embeddings.size(1)))
-            verification_embeddings = torch.reshape(verification_embeddings, (hp.test.N, hp.test.M//2, verification_embeddings.size(1)))
+            enrollment_embeddings = torch.reshape(enrollment_embeddings, (hp.test.N, hp.test.K, enrollment_embeddings.size(1)))
+            verification_embeddings = torch.reshape(verification_embeddings, (hp.test.N, MminusK, verification_embeddings.size(1)))
             
             enrollment_centroids = get_centroids(enrollment_embeddings)
             
@@ -134,11 +135,15 @@ def test(model_path):
             for thres in [0.01*i+0.5 for i in range(50)]:
                 sim_matrix_thresh = sim_matrix>thres
                 
-                FAR = (sum([sim_matrix_thresh[i].float().sum()-sim_matrix_thresh[i,:,i].float().sum() for i in range(int(hp.test.N))])
-                /(hp.test.N-1.0)/(float(hp.test.M/2))/hp.test.N)
+                pred = lambda i: sim_matrix_thresh[i].float().sum()
+                true = lambda i: sim_matrix_thresh[i,:,i].float().sum()
+                false_positive = lambda i: pred(i) - true(i)
+                FAR = (sum([false_positive(i) for i in range(int(hp.test.N))])
+                /(hp.test.N-1.0)/(float(MminusK))/hp.test.N)
     
-                FRR = (sum([hp.test.M/2-sim_matrix_thresh[i,:,i].float().sum() for i in range(int(hp.test.N))])
-                /(float(hp.test.M/2))/hp.test.N)
+                true_negative = lambda i: MminusK - true(i)
+                FRR = (sum([true_negative(i) for i in range(int(hp.test.N))])
+                /(float(MminusK))/hp.test.N)
                 
                 # Save threshold when FAR = FRR (=EER)
                 if diff> abs(FAR-FRR):
@@ -148,7 +153,11 @@ def test(model_path):
                     EER_FAR = FAR
                     EER_FRR = FRR
             batch_avg_EER += EER
-            print("\nEER : %0.2f (thres:%0.2f, FAR:%0.2f, FRR:%0.2f)"%(EER,EER_thresh,EER_FAR,EER_FRR))
+            mesg = "\nEER : %0.2f (thres:%0.2f, FAR:%0.2f, FRR:%0.2f)"%(EER,EER_thresh,EER_FAR,EER_FRR)
+            print(mesg)
+            if hp.test.log_file is not None:
+                with open(hp.test.log_file,'a') as f:
+                    f.write(mesg)
         avg_EER += batch_avg_EER/(batch_id+1)
     avg_EER = avg_EER / hp.test.epochs
     print("\n EER across {0} epochs: {1:.4f}".format(hp.test.epochs, avg_EER))

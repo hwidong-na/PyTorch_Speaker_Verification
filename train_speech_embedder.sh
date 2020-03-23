@@ -31,6 +31,8 @@ unzip -n $SCRATCH/darpa-timit-acousticphonetic-continuous-speech.zip -d $SLURM_T
 # Step 1. Preprocess data
 if [[ $skip < 1 ]]; then
 echo "\
+unprocessed_data: '$SLURM_TMPDIR/data/*/*/*/*.wav'
+---
 data:
     train_path: '$SLURM_TMPDIR/train_tisv'
     train_path_unprocessed: '$SLURM_TMPDIR/data/TRAIN/*/*/*.wav'
@@ -133,6 +135,7 @@ model:
 test:
     N : 32 #Number of speakers in batch
     M : 10 #Number of utterances per speaker
+    K : 1 #Number of support set per speaker
     num_workers: 0 #number of workers for data laoder
     epochs: 10 #testing speaker epochs
     log_interval: 1 #Epochs before printing progress
