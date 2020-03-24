@@ -29,6 +29,12 @@ cd PyTorch_Speaker_Verification
 unzip -n $SCRATCH/darpa-timit-acousticphonetic-continuous-speech.zip -d $SLURM_TMPDIR
 
 # Step 1. Preprocess data
+if [[ -s $SCRATCH/nahwidon.6458355.0/train_tisv ]];then
+    cp -r $SCRATCH/nahwidon.6458355.0/train_tisv $SLURM_TMPDIR
+fi
+if [[ -s $SCRATCH/nahwidon.6458355.0/test_tisv ]];then
+    cp -r $SCRATCH/nahwidon.6458355.0/test_tisv $SLURM_TMPDIR
+fi
 if [[ $skip < 1 ]]; then
 echo "\
 unprocessed_data: '$SLURM_TMPDIR/data/*/*/*/*.wav'
@@ -58,6 +64,9 @@ cp -r $SLURM_TMPDIR/test_tisv $SCRATCH/$JOBID/
 fi
 
 # Step 2. Train speech embedder
+if [[ -s $SCRATCH/nahwidon.6458355.0/checkpoint ]];then
+    cp -r $SCRATCH/nahwidon.6458355.0/checkpoint $SLURM_TMPDIR
+fi
 if [[ $skip < 2 ]]; then
 echo "
 training: !!bool "true"
@@ -83,7 +92,6 @@ model:
     hidden: 768 #Number of LSTM hidden layer units
     num_layer: 3 #Number of LSTM layers
     proj: 256 #Embedding size
-    model_path: '$SLURM_TMPDIR/model.model' #Model path for testing, inference, or resuming training
 ---
 train:
     N : 64 #Number of speakers in batch
@@ -134,8 +142,8 @@ model:
 ---
 test:
     N : 32 #Number of speakers in batch
-    M : 10 #Number of utterances per speaker
-    K : 1 #Number of support set per speaker
+    M : 7 #Number of utterances per speaker
+    K : 5 #Number of support set per speaker
     num_workers: 0 #number of workers for data laoder
     epochs: 10 #testing speaker epochs
     log_interval: 1 #Epochs before printing progress

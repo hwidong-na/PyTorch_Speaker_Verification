@@ -105,32 +105,49 @@ def test(model_path):
     for e in range(hp.test.epochs):
         batch_avg_EER = 0
         for batch_id, mel_db_batch in enumerate(test_loader):
-            #k-shot test
-            enrollment_batch, verification_batch = mel_db_batch[:,:hp.test.K,:,:], mel_db_batch[:,hp.test.K:,:,:]
-            
-            MminusK = hp.test.M-hp.test.K
-            enrollment_batch = torch.reshape(enrollment_batch, (hp.test.N*hp.test.K, enrollment_batch.size(2), enrollment_batch.size(3)))
-            verification_batch = torch.reshape(verification_batch, (hp.test.N*MminusK, verification_batch.size(2), verification_batch.size(3)))
-            
-            perm = random.sample(range(0,verification_batch.size(0)), verification_batch.size(0))
+            #TODO(hwidong.na): k-shot test
+            #TODO(hwidong.na): randomize enrollment / verification
+            perm = random.sample(range(0,hp.test.N*hp.test.M), hp.test.N*hp.test.M)
             unperm = list(perm)
             for i,j in enumerate(perm):
                 unperm[j] = i
-                
-            verification_batch = verification_batch[perm]
-            enrollment_embeddings = embedder_net(enrollment_batch)
-            verification_embeddings = embedder_net(verification_batch)
-            verification_embeddings = verification_embeddings[unperm]
-            
-            enrollment_embeddings = torch.reshape(enrollment_embeddings, (hp.test.N, hp.test.K, enrollment_embeddings.size(1)))
-            verification_embeddings = torch.reshape(verification_embeddings, (hp.test.N, MminusK, verification_embeddings.size(1)))
-            
+            mel_db_batch = mel_db_batch.view(hp.test.N*hp.test.M, mel_db_batch.size(2), mel_db_batch.size(3))
+            mel_db_batch = mel_db_batch[perm]
+            embeddings = embedder_net(mel_db_batch)
+            embeddings = embeddings[unperm]
+            embeddings = torch.reshape(embeddings, (hp.test.N, hp.test.M, embeddings.size(1)))
+
+            enrollment_embeddings = embeddings[:,:hp.test.K,:]
             enrollment_centroids = get_centroids(enrollment_embeddings)
+            # compute similarity using all test data
+            sim_matrix = get_cossim(embeddings, enrollment_centroids)
+            # calculate ERR excluding enrollment
+            sim_matrix = sim_matrix[:,hp.test.K:,:]
             
-            sim_matrix = get_cossim(verification_embeddings, enrollment_centroids)
+            MminusK = hp.test.M-hp.test.K
+            # enrollment_batch, verification_batch = mel_db_batch[:,:hp.test.K,:,:], mel_db_batch[:,hp.test.K:,:,:]
+            # enrollment_batch = torch.reshape(enrollment_batch, (hp.test.N*hp.test.K, enrollment_batch.size(2), enrollment_batch.size(3)))
+            # verification_batch = torch.reshape(verification_batch, (hp.test.N*MminusK, verification_batch.size(2), verification_batch.size(3)))
+            
+            # perm = random.sample(range(0,verification_batch.size(0)), verification_batch.size(0))
+            # unperm = list(perm)
+            # for i,j in enumerate(perm):
+            #     unperm[j] = i
+                
+            # verification_batch = verification_batch[perm]
+            # enrollment_embeddings = embedder_net(enrollment_batch)
+            # verification_embeddings = embedder_net(verification_batch)
+            # verification_embeddings = verification_embeddings[unperm]
+            
+            # enrollment_embeddings = torch.reshape(enrollment_embeddings, (hp.test.N, hp.test.K, enrollment_embeddings.size(1)))
+            # verification_embeddings = torch.reshape(verification_embeddings, (hp.test.N, MminusK, verification_embeddings.size(1)))
+            
+            # enrollment_centroids = get_centroids(enrollment_embeddings)
+            
+            # sim_matrix = get_cossim(verification_embeddings, enrollment_centroids)
             
             # calculating EER
-            diff = 1; EER=0; EER_thresh = 0; EER_FAR=0; EER_FRR=0
+            diff = 1; EER=1; EER_thresh = 1; EER_FAR=1; EER_FRR=1
             
             for thres in [0.01*i+0.5 for i in range(50)]:
                 sim_matrix_thresh = sim_matrix>thres
