@@ -17,7 +17,7 @@ from data_load import SpeakerDatasetTIMIT, SpeakerDatasetTIMITPreprocessed
 from speech_embedder_net import SpeechEmbedder, GE2ELoss
 from utils import get_centroids, get_cossim, get_cosdiff
 
-def train(model_path):
+def train():
     device = torch.device(hp.device)
     
     if hp.data.data_preprocessed:
@@ -28,7 +28,7 @@ def train(model_path):
     
     embedder_net = SpeechEmbedder().to(device)
     if hp.train.restore:
-        embedder_net.load_state_dict(torch.load(model_path))
+        embedder_net.load_state_dict(torch.load(hp.model.model_path))
     ge2e_loss = GE2ELoss(device)
     #Both net and loss have trainable parameters
     optimizer = torch.optim.SGD([
@@ -90,7 +90,7 @@ def train(model_path):
     
     print("\nDone, trained model saved at", save_model_path)
 
-def test(model_path):
+def test():
     
     if hp.data.data_preprocessed:
         test_dataset = SpeakerDatasetTIMITPreprocessed()
@@ -99,7 +99,7 @@ def test(model_path):
     test_loader = DataLoader(test_dataset, batch_size=hp.test.N, shuffle=True, num_workers=hp.test.num_workers, drop_last=True)
     
     embedder_net = SpeechEmbedder()
-    embedder_net.load_state_dict(torch.load(model_path))
+    embedder_net.load_state_dict(torch.load(hp.model.model_path))
     embedder_net.eval()
     
     avg_EER = 0
@@ -161,6 +161,6 @@ def test(model_path):
         
 if __name__=="__main__":
     if hp.training:
-        train(hp.model.model_path)
+        train()
     else:
-        test(hp.model.model_path)
+        test()

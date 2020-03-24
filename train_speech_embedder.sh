@@ -33,11 +33,8 @@ cd PyTorch_Speaker_Verification
 unzip -n $SCRATCH/darpa-timit-acousticphonetic-continuous-speech.zip -d $SLURM_TMPDIR
 
 # Step 1. Preprocess data
-if [[ -s $prevexp/train_tisv ]];then
-    cp -r $prevexp/train_tisv $SLURM_TMPDIR
-fi
-if [[ -s $prevexp/test_tisv ]];then
-    cp -r $prevexp/test_tisv $SLURM_TMPDIR
+if [[ -s $prevexp/data.tgz ]];then
+    tar zxvf $prevexp/data.tgz -C $SLURM_TMPDIR
 fi
 if [[ $skip < 1 ]]; then
 echo "\
@@ -61,15 +58,19 @@ data:
 " > config/config.yaml
 
 python data_preprocess.py
+ret=$?
+if [[ $ret -ne 0 ]];then
+echo "terminate python data_preprocess.py"
+exit $ret
+fi
 
-cp -r $SLURM_TMPDIR/train_tisv $SCRATCH/$JOBID/
-cp -r $SLURM_TMPDIR/test_tisv $SCRATCH/$JOBID/
+(cd $SLURM_TMPDIR; tar zcvf $SCRATCH/$JOBID/data.tgz train_tisv test_tisv)
 
 fi
 
 # Step 2. Train speech embedder
-if [[ -s $prevexp/checkpoint ]];then
-    cp -r $prevexp/checkpoint $SLURM_TMPDIR
+if [[ -s $prevexp/model.tgz ]];then
+    tar zxvf $prevexp/model.tgz -C $SLURM_TMPDIR
 fi
 if [[ $skip < 2 ]]; then
 echo "
@@ -79,8 +80,6 @@ device: "cuda"
 data:
     train_path: '$SLURM_TMPDIR/train_tisv'
     train_path_unprocessed: '$SLURM_TMPDIR/data/TRAIN/*/*/*.wav'
-    test_path: '$SLURM_TMPDIR/test_tisv'
-    test_path_unprocessed: '$SLURM_TMPDIR/data/TEST/*/*/*.wav'
     data_preprocessed: !!bool "true" 
     sr: 16000
     nfft: 512 #For mel spectrogram preprocess
@@ -96,6 +95,7 @@ model:
     hidden: 768 #Number of LSTM hidden layer units
     num_layer: 3 #Number of LSTM layers
     proj: 256 #Embedding size
+    model_path: '$SLURM_TMPDIR/checkpoint/init.model'
 ---
 train:
     N : 64 #Number of speakers in batch
@@ -104,7 +104,7 @@ train:
     lr: 0.01 
     epochs: 950 #Max training speaker epoch 
     log_interval: 1 #Epochs before printing progress
-    log_file: '$SLURM_TMPDIR/checkpoint/train.log'
+    log_file: '$SLURM_TMPDIR/train.log'
     checkpoint_interval: 120 #Save model after x speaker epochs
     checkpoint_dir: '$SLURM_TMPDIR/checkpoint'
     restore: !!bool "false" #Resume training from previous model path
@@ -112,8 +112,13 @@ train:
 " > config/config.yaml
 
 python train_speech_embedder.py
+ret=$?
+if [[ $ret -ne 0 ]];then
+echo "terminate python train_speech_embedder.py"
+exit $ret
+fi
 
-cp -r $SLURM_TMPDIR/checkpoint $SCRATCH/$JOBID/
+(cd $SLURM_TMPDIR; tar zcvf $SCRATCH/$JOBID/model.tgz checkpoint)
 fi
 
 # Step 3. Test speech embedder
@@ -125,8 +130,6 @@ training: !!bool "false"
 device: "cuda"
 ---
 data:
-    train_path: '$SLURM_TMPDIR/train_tisv'
-    train_path_unprocessed: '$SLURM_TMPDIR/data/TRAIN/*/*/*.wav'
     test_path: '$SLURM_TMPDIR/test_tisv'
     test_path_unprocessed: '$SLURM_TMPDIR/data/TEST/*/*/*.wav'
     data_preprocessed: !!bool "true" 
@@ -153,13 +156,12 @@ test:
     num_workers: 0 #number of workers for data laoder
     epochs: 10 #testing speaker epochs
     log_interval: 1 #Epochs before printing progress
-    log_file: '$SLURM_TMPDIR/checkpoint/test.k$k.log'
+    log_file: '$SLURM_TMPDIR/test.k$k.log'
 " > config/config.yaml
 
 python train_speech_embedder.py
-
-cp -r $SLURM_TMPDIR/checkpoint $SCRATCH/$JOBID/
-
 done
 
 fi
+
+(cd $SLURM_TMPDIR; tar zcvf $SCRATCH/$JOBID/log.tgz *.log) 
