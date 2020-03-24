@@ -95,7 +95,6 @@ model:
     hidden: 768 #Number of LSTM hidden layer units
     num_layer: 3 #Number of LSTM layers
     proj: 256 #Embedding size
-    model_path: '$SLURM_TMPDIR/checkpoint/init.model'
 ---
 train:
     N : 64 #Number of speakers in batch
@@ -156,7 +155,7 @@ test:
     num_workers: 0 #number of workers for data laoder
     epochs: 10 #testing speaker epochs
     log_interval: 1 #Epochs before printing progress
-    log_file: '$SLURM_TMPDIR/test.k$k.log'
+    log_file: '$SLURM_TMPDIR/test.K$K.log'
 " > config/config.yaml
 
 python train_speech_embedder.py
