@@ -127,7 +127,7 @@ def calc_loss(sim_matrix):
     pos = sim_matrix[same_idx, :, same_idx]
     neg = (torch.exp(sim_matrix).sum(dim=2) + 1e-6).log_()
     per_embedding_loss = -1 * (pos - neg)
-    loss = per_embedding_loss.sum()
+    loss = per_embedding_loss.mean()
     return loss, per_embedding_loss
 
 def calc_contrast_loss(sim_matrix):
@@ -142,7 +142,7 @@ def calc_contrast_loss(sim_matrix):
     # neg.shape = (n_spk, n_utt)
     neg, idx = torch.max(torch.sigmoid(sim_matrix), dim=2)
     per_embedding_loss = pos + neg
-    loss = per_embedding_loss.sum()
+    loss = per_embedding_loss.mean()
     return loss, per_embedding_loss
 
 def normalize_0_1(values, max_value, min_value):
