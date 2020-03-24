@@ -14,7 +14,8 @@ from torch.utils.data import DataLoader
 
 from hparam import hparam as hp
 from data_load import SpeakerDatasetTIMIT, SpeakerDatasetTIMITPreprocessed
-from speech_embedder_net import SpeechEmbedder, GE2ELoss, get_centroids, get_cossim
+from speech_embedder_net import SpeechEmbedder, GE2ELoss
+from utils import get_centroids, get_cossim, get_cosdiff
 
 def train(model_path):
     device = torch.device(hp.device)
@@ -107,6 +108,7 @@ def test(model_path):
         for batch_id, mel_db_batch in enumerate(test_loader):
             #TODO(hwidong.na): k-shot test
             #TODO(hwidong.na): randomize enrollment / verification
+            assert hp.test.M > hp.test.K
             perm = random.sample(range(0,hp.test.N*hp.test.M), hp.test.N*hp.test.M)
             unperm = list(perm)
             for i,j in enumerate(perm):
@@ -119,33 +121,11 @@ def test(model_path):
 
             enrollment_embeddings = embeddings[:,:hp.test.K,:]
             enrollment_centroids = get_centroids(enrollment_embeddings)
-            # compute similarity using all test data
-            sim_matrix = get_cossim(embeddings, enrollment_centroids)
+            verification_embeddings = embeddings[:,hp.test.K:,:]
+            sim_matrix = get_cosdiff(verification_embeddings, enrollment_centroids)
             # calculate ERR excluding enrollment
-            sim_matrix = sim_matrix[:,hp.test.K:,:]
             
             MminusK = hp.test.M-hp.test.K
-            # enrollment_batch, verification_batch = mel_db_batch[:,:hp.test.K,:,:], mel_db_batch[:,hp.test.K:,:,:]
-            # enrollment_batch = torch.reshape(enrollment_batch, (hp.test.N*hp.test.K, enrollment_batch.size(2), enrollment_batch.size(3)))
-            # verification_batch = torch.reshape(verification_batch, (hp.test.N*MminusK, verification_batch.size(2), verification_batch.size(3)))
-            
-            # perm = random.sample(range(0,verification_batch.size(0)), verification_batch.size(0))
-            # unperm = list(perm)
-            # for i,j in enumerate(perm):
-            #     unperm[j] = i
-                
-            # verification_batch = verification_batch[perm]
-            # enrollment_embeddings = embedder_net(enrollment_batch)
-            # verification_embeddings = embedder_net(verification_batch)
-            # verification_embeddings = verification_embeddings[unperm]
-            
-            # enrollment_embeddings = torch.reshape(enrollment_embeddings, (hp.test.N, hp.test.K, enrollment_embeddings.size(1)))
-            # verification_embeddings = torch.reshape(verification_embeddings, (hp.test.N, MminusK, verification_embeddings.size(1)))
-            
-            # enrollment_centroids = get_centroids(enrollment_embeddings)
-            
-            # sim_matrix = get_cossim(verification_embeddings, enrollment_centroids)
-            
             # calculating EER
             diff = 1; EER=1; EER_thresh = 1; EER_FAR=1; EER_FRR=1
             

@@ -11,6 +11,10 @@ skip=0
 if [[ $1 ]];then
 skip=$1
 fi
+if [[ $2 ]]; then
+prevexp=$2
+echo "previous expermiment: $prevexp"
+fi
 
 # Step 0. Prepare environment
 source $HOME/python3.8/bin/activate
@@ -29,11 +33,11 @@ cd PyTorch_Speaker_Verification
 unzip -n $SCRATCH/darpa-timit-acousticphonetic-continuous-speech.zip -d $SLURM_TMPDIR
 
 # Step 1. Preprocess data
-if [[ -s $SCRATCH/nahwidon.6458355.0/train_tisv ]];then
-    cp -r $SCRATCH/nahwidon.6458355.0/train_tisv $SLURM_TMPDIR
+if [[ -s $prevexp/train_tisv ]];then
+    cp -r $prevexp/train_tisv $SLURM_TMPDIR
 fi
-if [[ -s $SCRATCH/nahwidon.6458355.0/test_tisv ]];then
-    cp -r $SCRATCH/nahwidon.6458355.0/test_tisv $SLURM_TMPDIR
+if [[ -s $prevexp/test_tisv ]];then
+    cp -r $prevexp/test_tisv $SLURM_TMPDIR
 fi
 if [[ $skip < 1 ]]; then
 echo "\
@@ -64,8 +68,8 @@ cp -r $SLURM_TMPDIR/test_tisv $SCRATCH/$JOBID/
 fi
 
 # Step 2. Train speech embedder
-if [[ -s $SCRATCH/nahwidon.6458355.0/checkpoint ]];then
-    cp -r $SCRATCH/nahwidon.6458355.0/checkpoint $SLURM_TMPDIR
+if [[ -s $prevexp/checkpoint ]];then
+    cp -r $prevexp/checkpoint $SLURM_TMPDIR
 fi
 if [[ $skip < 2 ]]; then
 echo "
@@ -114,6 +118,8 @@ fi
 
 # Step 3. Test speech embedder
 if [[ $skip < 3 ]];then
+for K in 10 5 1; do
+
 echo "
 training: !!bool "false"
 device: "cuda"
@@ -142,14 +148,18 @@ model:
 ---
 test:
     N : 32 #Number of speakers in batch
-    M : 7 #Number of utterances per speaker
-    K : 5 #Number of support set per speaker
+    M : $(($K + 10)) #Number of utterances per speaker
+    K : $K #Number of support set per speaker
     num_workers: 0 #number of workers for data laoder
     epochs: 10 #testing speaker epochs
     log_interval: 1 #Epochs before printing progress
-    log_file: '$SLURM_TMPDIR/checkpoint/test.log'
+    log_file: '$SLURM_TMPDIR/checkpoint/test.k$k.log'
 " > config/config.yaml
 
 python train_speech_embedder.py
+
+cp -r $SLURM_TMPDIR/checkpoint $SCRATCH/$JOBID/
+
+done
 
 fi

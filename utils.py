@@ -69,6 +69,33 @@ def get_cossim_prior(embeddings, centroids):
                 cossim[speaker_num][utterance_num][centroid_num] = output
     return cossim
 
+def get_cosdiff(embeddings, centroids):
+    # number of utterances per speaker
+    # shape(embeddings) = [n_spk, n_utt, n_dim]
+    # shape(centroids) = [n_spk, n_dim]
+    n_spk = embeddings.shape[0]
+    n_utt = embeddings.shape[1]
+    n_dim = embeddings.shape[2]
+
+    n_cen = centroids.shape[0]
+    # embeddings_flat.shape = (n_spk*n_utt, n_dim)
+    embeddings_flat = embeddings.reshape(n_spk*n_utt, n_dim)
+    # now we get the cosine distance between each utterance and the other speakers'
+    # centroids
+    # to do so requires comparing each utterance to each centroid. To keep the
+    # operation fast, we vectorize by using matrices L (embeddings) and
+    # R (centroids) where L has each utterance repeated sequentially for all
+    # comparisons and R has the entire centroids frame repeated for each utterance
+    #centroids_expand.shape = [n_spk*n_utt*n_spk, n_dim]
+    centroids_expand = centroids.repeat((n_utt*n_spk, 1))
+    #embedding_expand.shape = [n_spk*n_utt*n_spk, n_dim]
+    embeddings_expand = embeddings_flat.unsqueeze(1).repeat((1, n_cen, 1))
+    embeddings_expand = embeddings_expand.view(n_spk*n_utt*n_cen, n_dim)
+    # cos_diff.shape = (n_spk, n_utt, n_spk)
+    cos_diff = F.cosine_similarity(embeddings_expand, centroids_expand)
+    cos_diff = cos_diff.view(n_spk, n_utt, n_cen)
+    return cos_diff
+
 def get_cossim(embeddings, centroids):
     # number of utterances per speaker
     # shape(embeddings) = [n_spk, n_utt, n_dim]
@@ -92,20 +119,7 @@ def get_cossim(embeddings, centroids):
     # cos_same.shape = (n_spk, n_utt)
     cos_same = F.cosine_similarity(embeddings_flat, utterance_centroids_flat)
 
-    # now we get the cosine distance between each utterance and the other speakers'
-    # centroids
-    # to do so requires comparing each utterance to each centroid. To keep the
-    # operation fast, we vectorize by using matrices L (embeddings) and
-    # R (centroids) where L has each utterance repeated sequentially for all
-    # comparisons and R has the entire centroids frame repeated for each utterance
-    #centroids_expand.shape = [n_spk*n_utt*n_spk, n_dim]
-    centroids_expand = centroids.repeat((n_utt*n_spk, 1))
-    #embedding_expand.shape = [n_spk*n_utt*n_spk, n_dim]
-    embeddings_expand = embeddings_flat.unsqueeze(1).repeat((1, n_spk, 1))
-    embeddings_expand = embeddings_expand.view(n_spk*n_utt*n_spk, n_dim)
-    # cos_diff.shape = (n_spk, n_utt, n_spk)
-    cos_diff = F.cosine_similarity(embeddings_expand, centroids_expand)
-    cos_diff = cos_diff.view(n_spk, n_utt, n_spk)
+    cos_diff = get_cosdiff(embeddings, centroids)
     # assign the cosine distance for same speakers to the proper idx
     same_idx = list(range(n_spk))
     cos_diff[same_idx, :, same_idx] = cos_same.view(n_spk, n_utt)
