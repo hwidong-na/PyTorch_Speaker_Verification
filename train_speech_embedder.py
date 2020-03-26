@@ -14,10 +14,13 @@ from torch.utils.data import DataLoader
 
 from hparam import hparam as hp
 from data_load import SpeakerDatasetTIMIT, SpeakerDatasetTIMITPreprocessed
-from speech_embedder_net import SpeechEmbedder, GE2ELoss
-from utils import get_centroids, get_cossim, get_cosdiff
+from speech_embedder_net import SpeechEmbedder, EuclideanDistanceLoss
+from utils import get_centroids, get_distance_forall, normalize_0_1
+import torch.nn.functional as F
 
 def train():
+    assert hp.train.N > 1
+    assert hp.train.M > 1
     device = torch.device(hp.device)
     
     if hp.data.data_preprocessed:
@@ -29,14 +32,23 @@ def train():
     embedder_net = SpeechEmbedder().to(device)
     if hp.train.restore:
         embedder_net.load_state_dict(torch.load(hp.model.model_path))
-    ge2e_loss = GE2ELoss(device)
+    loss_net = EuclideanDistanceLoss(device)
+    opt = lambda params, **kwargs: torch.optim.SGD(params, **kwargs)
     #Both net and loss have trainable parameters
-    optimizer = torch.optim.SGD([
+    # if hp.train.optimizer.lower() == "sgd":
+    #     if hp.train.momentum is not None:
+    #         opt = lambda params, **kwargs: torch.optim.SGD(params, momentum=hp.train.momentum, nesterov=True, **kwargs)
+    #     else:
+    #         opt = lambda params, **kwargs: torch.optim.SGD(params, **kwargs)
+    # elif hp.train.optimizer.lower() == "adam":
+    #     opt = lambda params, **kwargs: torch.optim.Adam(params, **kwargs)
+    optimizer = opt([
                     {'params': embedder_net.parameters()},
-                    {'params': ge2e_loss.parameters()}
+                    {'params': loss_net.parameters()}
                 ], lr=hp.train.lr)
     
     os.makedirs(hp.train.checkpoint_dir, exist_ok=True)
+    torch.autograd.set_detect_anomaly(True)
     
     embedder_net.train()
     iteration = 0
@@ -59,10 +71,10 @@ def train():
             embeddings = torch.reshape(embeddings, (hp.train.N, hp.train.M, embeddings.size(1)))
             
             #get loss, call backward, step optimizer
-            loss = ge2e_loss(embeddings) #wants (Speaker, Utterances, embedding)
+            loss = loss_net(embeddings) #wants (Speaker, Utterances, embedding)
             loss.backward()
             torch.nn.utils.clip_grad_norm_(embedder_net.parameters(), 3.0)
-            torch.nn.utils.clip_grad_norm_(ge2e_loss.parameters(), 1.0)
+            torch.nn.utils.clip_grad_norm_(loss_net.parameters(), 1.0)
             optimizer.step()
             
             total_loss = total_loss + loss
@@ -91,6 +103,7 @@ def train():
     print("\nDone, trained model saved at", save_model_path)
 
 def test():
+    device = torch.device(hp.device)
     
     if hp.data.data_preprocessed:
         test_dataset = SpeakerDatasetTIMITPreprocessed()
@@ -98,7 +111,7 @@ def test():
         test_dataset = SpeakerDatasetTIMIT()
     test_loader = DataLoader(test_dataset, batch_size=hp.test.N, shuffle=True, num_workers=hp.test.num_workers, drop_last=True)
     
-    embedder_net = SpeechEmbedder()
+    embedder_net = SpeechEmbedder().to(device)
     embedder_net.load_state_dict(torch.load(hp.model.model_path))
     embedder_net.eval()
     
@@ -106,6 +119,7 @@ def test():
     for e in range(hp.test.epochs):
         batch_avg_EER = 0
         for batch_id, mel_db_batch in enumerate(test_loader):
+            mel_db_batch = mel_db_batch.to(device)
             #TODO(hwidong.na): k-shot test
             #TODO(hwidong.na): randomize enrollment / verification
             assert hp.test.M > hp.test.K
@@ -122,15 +136,18 @@ def test():
             enrollment_embeddings = embeddings[:,:hp.test.K,:]
             enrollment_centroids = get_centroids(enrollment_embeddings)
             verification_embeddings = embeddings[:,hp.test.K:,:]
-            sim_matrix = get_cosdiff(verification_embeddings, enrollment_centroids)
+            # shape.d_matrix = (hp.test.K, hp.test.M-hp.test.K, hp.test.K)
+            d_matrix = get_distance_forall(verification_embeddings, enrollment_centroids)
+            # because the distance is not bounded, need to normalize 
+            d_matrix = F.normalize(d_matrix, dim=2)
             # calculate ERR excluding enrollment
             
             MminusK = hp.test.M-hp.test.K
             # calculating EER
-            diff = 1; EER=1; EER_thresh = 1; EER_FAR=1; EER_FRR=1
+            diff = 1 + 1e-6; EER=1; EER_thresh = 1; EER_FAR=1; EER_FRR=1
             
-            for thres in [0.01*i+0.5 for i in range(50)]:
-                sim_matrix_thresh = sim_matrix>thres
+            for thres in [0.01*i for i in range(100)]:
+                sim_matrix_thresh = d_matrix<thres
                 
                 pred = lambda i: sim_matrix_thresh[i].float().sum()
                 true = lambda i: sim_matrix_thresh[i,:,i].float().sum()
@@ -150,14 +167,24 @@ def test():
                     EER_FAR = FAR
                     EER_FRR = FRR
             batch_avg_EER += EER
-            mesg = "\nEER : %0.2f (thres:%0.2f, FAR:%0.2f, FRR:%0.2f)"%(EER,EER_thresh,EER_FAR,EER_FRR)
+            # human-readable 
+            EER *= 100
+            EER_FAR *= 100
+            EER_FRR *= 100
+            mesg = "\nEER : %0.2f (thres:%.2f, FAR:%.2f, FRR:%.2f)"%(EER,EER_thresh,EER_FAR,EER_FRR)
             print(mesg)
             if hp.test.log_file is not None:
                 with open(hp.test.log_file,'a') as f:
                     f.write(mesg)
         avg_EER += batch_avg_EER/(batch_id+1)
     avg_EER = avg_EER / hp.test.epochs
-    print("\n EER across {0} epochs: {1:.4f}".format(hp.test.epochs, avg_EER))
+    # human-readable 
+    avg_EER *= 100
+    mesg = "\n EER across {0} epochs: {1:.2f}".format(hp.test.epochs, avg_EER)
+    print(mesg)
+    if hp.test.log_file is not None:
+        with open(hp.test.log_file,'a') as f:
+            f.write(mesg)
         
 if __name__=="__main__":
     if hp.training:

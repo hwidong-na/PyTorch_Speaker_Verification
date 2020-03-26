@@ -15,6 +15,12 @@ if [[ $2 ]]; then
 prevexp=$2
 echo "previous expermiment: $prevexp"
 fi
+if [[ $3 ]]; then
+mixing_alpha=$3
+fi
+if [[ ! $mixing_alpha ]]; then
+mixing_alpha=0.5
+fi
 
 # Step 0. Prepare environment
 source $HOME/python3.8/bin/activate
@@ -38,11 +44,11 @@ if [[ -s $prevexp/data.tgz ]];then
 fi
 if [[ $skip < 1 ]]; then
 echo "\
-unprocessed_data: '$SLURM_TMPDIR/data/*/*/*/*.wav'
----
 data:
     train_path: '$SLURM_TMPDIR/train_tisv'
+    train_N: 10000
     train_path_unprocessed: '$SLURM_TMPDIR/data/TRAIN/*/*/*.wav'
+    test_N: 250
     test_path: '$SLURM_TMPDIR/test_tisv'
     test_path_unprocessed: '$SLURM_TMPDIR/data/TEST/*/*/*.wav'
     data_preprocessed: !!bool "true" 
@@ -54,7 +60,11 @@ data:
     tisv_frame: 180 #Max number of time steps in input after preprocess
     tisv_frame_min: 140 #Min number of time steps in input after preprocess
     tisv_frame_max: 180 #Max number of time steps in input after preprocess
-    alpha: 0.5 #for mixing
+    mixing_alpha: $mixing_alpha #for mixing
+    num_workers: 1 #number of workers/cpu for data_preprocessor
+    log_file: '$SLURM_TMPDIR/data.log'
+    wav_path: '$SLURM_TMPDIR/wav'
+
 " > config/config.yaml
 
 python data_preprocess.py
@@ -65,6 +75,7 @@ exit $ret
 fi
 
 (cd $SLURM_TMPDIR; tar zcvf $SCRATCH/$JOBID/data.tgz train_tisv test_tisv)
+mv config/config.yaml "$SLURM_TMPDIR/config.data.yaml"
 
 fi
 
@@ -89,19 +100,19 @@ data:
     tisv_frame: 180 #Max number of time steps in input after preprocess
     tisv_frame_min: 140 #Min number of time steps in input after preprocess
     tisv_frame_max: 180 #Max number of time steps in input after preprocess
-    alpha: 0.5 #for mixing
 ---   
 model:
     hidden: 768 #Number of LSTM hidden layer units
     num_layer: 3 #Number of LSTM layers
     proj: 256 #Embedding size
-    model_path: '$SLURM_TMPDIR/checkpoint/init.model'
 ---
 train:
     N : 64 #Number of speakers in batch
     M : 10 #Number of utterances per speaker
     num_workers: 0 #number of workers for dataloader
-    lr: 0.01 
+    lr: 0.1 
+    optimizer: SGD
+    momentum: 0.9
     epochs: 950 #Max training speaker epoch 
     log_interval: 1 #Epochs before printing progress
     log_file: '$SLURM_TMPDIR/train.log'
@@ -119,6 +130,7 @@ exit $ret
 fi
 
 (cd $SLURM_TMPDIR; tar zcvf $SCRATCH/$JOBID/model.tgz checkpoint)
+mv config/config.yaml "$SLURM_TMPDIR/config.train.yaml"
 fi
 
 # Step 3. Test speech embedder
@@ -141,7 +153,6 @@ data:
     tisv_frame: 180 #Max number of time steps in input after preprocess
     tisv_frame_min: 140 #Min number of time steps in input after preprocess
     tisv_frame_max: 180 #Max number of time steps in input after preprocess
-    alpha: 0.5 #for mixing
 ---   
 model:
     hidden: 768 #Number of LSTM hidden layer units
@@ -150,18 +161,20 @@ model:
     model_path: '$SLURM_TMPDIR/checkpoint/final_epoch_950.model'
 ---
 test:
-    N : 32 #Number of speakers in batch
+    N : 128 #Number of speakers in batch
     M : $(($K + 10)) #Number of utterances per speaker
     K : $K #Number of support set per speaker
     num_workers: 0 #number of workers for data laoder
-    epochs: 10 #testing speaker epochs
+    epochs: 3 #testing speaker epochs
     log_interval: 1 #Epochs before printing progress
-    log_file: '$SLURM_TMPDIR/test.k$k.log'
+    log_file: '$SLURM_TMPDIR/test.K$K.log'
 " > config/config.yaml
 
 python train_speech_embedder.py
+mv config/config.yaml "$SLURM_TMPDIR/config.test.K$K.yaml"
 done
 
 fi
 
 (cd $SLURM_TMPDIR; tar zcvf $SCRATCH/$JOBID/log.tgz *.log) 
+(cd $SLURM_TMPDIR; tar zcvf $SCRATCH/$JOBID/config.tgz *.yaml) 

@@ -8,9 +8,10 @@ Created on Wed Sep  5 20:58:34 2018
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 from hparam import hparam as hp
-from utils import get_centroids, get_cossim, calc_loss
+from utils import get_centroids, get_cossim, calc_loss, get_distance, calc_loss_euclidean
 
 class SpeechEmbedder(nn.Module):
     
@@ -23,27 +24,26 @@ class SpeechEmbedder(nn.Module):
           elif 'weight' in name:
              nn.init.xavier_normal_(param)
         self.projection = nn.Linear(hp.model.hidden, hp.model.proj)
+        self.scale = nn.Linear(hp.model.proj, 1)
         
     def forward(self, x):
         x, _ = self.LSTM_stack(x.float()) #(batch, frames, n_mels)
         #only use last frame
         x = x[:,x.size(1)-1]
         x = self.projection(x.float())
-        x = x / torch.norm(x, dim=1).unsqueeze(1)
-        return x
+        s = F.softplus(self.scale(x))
+        x = F.normalize(x, p=2, dim=1)
+        return x/s
 
-class GE2ELoss(nn.Module):
+class EuclideanDistanceLoss(nn.Module):
     
     def __init__(self, device):
-        super(GE2ELoss, self).__init__()
-        self.w = nn.Parameter(torch.tensor(10.0).to(device), requires_grad=True)
-        self.b = nn.Parameter(torch.tensor(-5.0).to(device), requires_grad=True)
+        super(EuclideanDistanceLoss, self).__init__()
         self.device = device
         
     def forward(self, embeddings):
-        torch.clamp(self.w, 1e-6)
         centroids = get_centroids(embeddings)
-        cossim = get_cossim(embeddings, centroids)
-        sim_matrix = self.w*cossim.to(self.device) + self.b
-        loss, _ = calc_loss(sim_matrix)
+        distance = get_distance(embeddings, centroids)
+        d_matrix = distance.to(self.device)
+        loss, _ = calc_loss_euclidean(d_matrix)
         return loss
