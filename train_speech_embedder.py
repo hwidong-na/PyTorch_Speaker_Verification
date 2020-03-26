@@ -11,12 +11,13 @@ import random
 import time
 import torch
 from torch.utils.data import DataLoader
+import torch.nn.functional as F
 
 from hparam import hparam as hp
 from data_load import SpeakerDatasetTIMIT, SpeakerDatasetTIMITPreprocessed
-from speech_embedder_net import SpeechEmbedder, EuclideanDistanceLoss
-from utils import get_centroids, get_distance_forall, normalize_0_1
-import torch.nn.functional as F
+from speech_embedder_net import SpeechEmbedder, GE2ELoss, ContrastLoss
+from speech_embedder_net import SpeechEmbedderV2, EuclideanDistanceLoss
+from utils import get_centroids, get_cosdiff, get_distance_forall
 
 def train():
     assert hp.train.N > 1
@@ -29,12 +30,18 @@ def train():
         train_dataset = SpeakerDatasetTIMIT()
     train_loader = DataLoader(train_dataset, batch_size=hp.train.N, shuffle=True, num_workers=hp.train.num_workers, drop_last=True) 
     
-    embedder_net = SpeechEmbedder().to(device)
     if hp.train.restore:
         embedder_net.load_state_dict(torch.load(hp.model.model_path))
-    loss_net = EuclideanDistanceLoss(device)
+    if hp.train.loss_type == "euclidean":
+        embedder_net = SpeechEmbedderV2().to(device)
+        loss_net = EuclideanDistanceLoss(device)
+    else:
+        embedder_net = SpeechEmbedder().to(device)
+        if hp.train.loss_type == "contrast":
+            loss_net = ContrastLoss(device)
+        else:
+            loss_net = GE2ELoss(device)
     opt = lambda params, **kwargs: torch.optim.SGD(params, **kwargs)
-    #Both net and loss have trainable parameters
     # if hp.train.optimizer.lower() == "sgd":
     #     if hp.train.momentum is not None:
     #         opt = lambda params, **kwargs: torch.optim.SGD(params, momentum=hp.train.momentum, nesterov=True, **kwargs)
@@ -42,6 +49,7 @@ def train():
     #         opt = lambda params, **kwargs: torch.optim.SGD(params, **kwargs)
     # elif hp.train.optimizer.lower() == "adam":
     #     opt = lambda params, **kwargs: torch.optim.Adam(params, **kwargs)
+    #Both net and loss have trainable parameters
     optimizer = opt([
                     {'params': embedder_net.parameters()},
                     {'params': loss_net.parameters()}
@@ -111,7 +119,10 @@ def test():
         test_dataset = SpeakerDatasetTIMIT()
     test_loader = DataLoader(test_dataset, batch_size=hp.test.N, shuffle=True, num_workers=hp.test.num_workers, drop_last=True)
     
-    embedder_net = SpeechEmbedder().to(device)
+    if hp.train.loss_type == "euclidean":
+        embedder_net = SpeechEmbedderV2().to(device)
+    else:
+        embedder_net = SpeechEmbedder().to(device)
     embedder_net.load_state_dict(torch.load(hp.model.model_path))
     embedder_net.eval()
     
@@ -136,10 +147,14 @@ def test():
             enrollment_embeddings = embeddings[:,:hp.test.K,:]
             enrollment_centroids = get_centroids(enrollment_embeddings)
             verification_embeddings = embeddings[:,hp.test.K:,:]
-            # shape.d_matrix = (hp.test.K, hp.test.M-hp.test.K, hp.test.K)
-            d_matrix = get_distance_forall(verification_embeddings, enrollment_centroids)
-            # because the distance is not bounded, need to normalize 
-            d_matrix = F.normalize(d_matrix, dim=2)
+            if hp.train.loss_type == "euclidean":
+                d_matrix = get_distance_forall(verification_embeddings, enrollment_centroids)
+                # because the distance is not bounded, need to normalize 
+                d_matrix = F.normalize(d_matrix, dim=2)
+                threshold_fn = lambda thres: d_matrix < thres
+            else:
+                sim_matrix = get_cosdiff(verification_embeddings, enrollment_centroids)
+                threshold_fn = lambda thres: sim_matrix > thres
             # calculate ERR excluding enrollment
             
             MminusK = hp.test.M-hp.test.K
@@ -147,16 +162,16 @@ def test():
             diff = 1 + 1e-6; EER=1; EER_thresh = 1; EER_FAR=1; EER_FRR=1
             
             for thres in [0.01*i for i in range(100)]:
-                sim_matrix_thresh = d_matrix<thres
+                matrix_thresh = threshold_fn(thres)
                 
-                pred = lambda i: sim_matrix_thresh[i].float().sum()
-                true = lambda i: sim_matrix_thresh[i,:,i].float().sum()
-                false_positive = lambda i: pred(i) - true(i)
-                FAR = (sum([false_positive(i) for i in range(int(hp.test.N))])
+                pred = lambda i: matrix_thresh[i].float().sum()
+                true = lambda i: matrix_thresh[i,:,i].float().sum()
+                false_acceptance = lambda i: pred(i) - true(i)
+                FAR = (sum([false_acceptance(i) for i in range(int(hp.test.N))])
                 /(hp.test.N-1.0)/(float(MminusK))/hp.test.N)
     
-                true_negative = lambda i: MminusK - true(i)
-                FRR = (sum([true_negative(i) for i in range(int(hp.test.N))])
+                false_rejection = lambda i: MminusK - true(i)
+                FRR = (sum([false_rejection(i) for i in range(int(hp.test.N))])
                 /(float(MminusK))/hp.test.N)
                 
                 # Save threshold when FAR = FRR (=EER)

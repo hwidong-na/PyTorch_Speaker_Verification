@@ -16,11 +16,13 @@ prevexp=$2
 echo "previous expermiment: $prevexp"
 fi
 if [[ $3 ]]; then
-mixing_alpha=$3
+loss_type=$3
 fi
-if [[ ! $mixing_alpha ]]; then
+if [[ ! $loss_type ]]; then
+loss_type='euclidean'
+fi
+
 mixing_alpha=0.5
-fi
 
 # Step 0. Prepare environment
 source $HOME/python3.8/bin/activate
@@ -110,7 +112,7 @@ train:
     N : 64 #Number of speakers in batch
     M : 10 #Number of utterances per speaker
     num_workers: 0 #number of workers for dataloader
-    lr: 0.1 
+    lr: 0.01
     optimizer: SGD
     momentum: 0.9
     epochs: 950 #Max training speaker epoch 
@@ -119,7 +121,7 @@ train:
     checkpoint_interval: 120 #Save model after x speaker epochs
     checkpoint_dir: '$SLURM_TMPDIR/checkpoint'
     restore: !!bool "false" #Resume training from previous model path
-    loss_type: 'contrast'
+    loss_type: '$loss_type'
 " > config/config.yaml
 
 python train_speech_embedder.py
@@ -160,12 +162,15 @@ model:
     proj: 256 #Embedding size
     model_path: '$SLURM_TMPDIR/checkpoint/final_epoch_950.model'
 ---
+train:
+    loss_type: '$loss_type'
+---
 test:
     N : 128 #Number of speakers in batch
     M : $(($K + 10)) #Number of utterances per speaker
     K : $K #Number of support set per speaker
     num_workers: 0 #number of workers for data laoder
-    epochs: 3 #testing speaker epochs
+    epochs: 5 #testing speaker epochs
     log_interval: 1 #Epochs before printing progress
     log_file: '$SLURM_TMPDIR/test.K$K.log'
 " > config/config.yaml
