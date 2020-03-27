@@ -20,5 +20,5 @@ elif [[ $SLURM_ARRAY_TASK_ID == 2 ]];then
 loss_type=contrast
 fi
 # using same dataset
-echo $HOME/PyTorch_Speaker_Verification/train_speech_embedder.sh 1 $SCRATCH/nahwidon.6509661.0/ $loss_type
-$HOME/PyTorch_Speaker_Verification/train_speech_embedder.sh 1 $SCRATCH/nahwidon.6509661.0/ $loss_type
+echo $HOME/PyTorch_Speaker_Verification/train_speech_embedder.sh 1 $SCRATCH/nahwidon.6509661.0/ $loss_type 5
+$HOME/PyTorch_Speaker_Verification/train_speech_embedder.sh 1 $SCRATCH/nahwidon.6509661.0/ $loss_type 5

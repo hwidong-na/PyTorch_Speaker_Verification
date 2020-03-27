@@ -7,20 +7,38 @@
 #SBATCH -o /scratch/nahwidon/slurm-%j.out# Write the log in $SCRATCH
 #SBATCH -e /scratch/nahwidon/slurm-%j.err# Write the err in $SCRATCH
 
+echo "Steps:"
+echo "0: Prepare environment"
+echo "1: Prepare data"
+echo "2: Process data"
+echo "3: Train speech embedder"
+echo "4: Test speech embedder"
 skip=0
 if [[ $1 ]];then
 skip=$1
+echo "skip $skip steps"
+
 fi
 if [[ $2 ]]; then
 prevexp=$2
 echo "previous expermiment: $prevexp"
 fi
+
 if [[ $3 ]]; then
 loss_type=$3
 fi
 if [[ ! $loss_type ]]; then
 loss_type='euclidean'
 fi
+echo "loss type: $loss_type"
+
+if [[ $4 ]]; then
+num_layer=$4
+fi
+if [[ ! $num_layer ]]; then
+num_layer=3
+fi
+echo "num layer: $num_layer"
 
 mixing_alpha=0.5
 
@@ -29,7 +47,6 @@ source $HOME/python3.8/bin/activate
 JOBID=`basename $SLURM_TMPDIR`
 mkdir -p $SCRATCH/$JOBID
 
-# Step 0. Prepare source
 cd $SLURM_TMPDIR
 echo "working dir: `pwd`"
 echo "output dir: $SCRATCH/$JOBID"
@@ -37,14 +54,16 @@ rm -rf PyTorch_Speaker_Verification
 git clone $HOME/PyTorch_Speaker_Verification
 cd PyTorch_Speaker_Verification
 
-# Step 0. Prepare data
+# Step 1. Prepare data
+if [[ $skip -lt 1 ]]; then
 unzip -n $SCRATCH/darpa-timit-acousticphonetic-continuous-speech.zip -d $SLURM_TMPDIR
+fi
 
-# Step 1. Preprocess data
+# Step 2. Preprocess data
 if [[ -s $prevexp/data.tgz ]];then
     tar zxvf $prevexp/data.tgz -C $SLURM_TMPDIR
 fi
-if [[ $skip < 1 ]]; then
+if [[ $skip -lt 2 ]]; then
 echo "\
 data:
     train_path: '$SLURM_TMPDIR/train_tisv'
@@ -85,7 +104,7 @@ fi
 if [[ -s $prevexp/model.tgz ]];then
     tar zxvf $prevexp/model.tgz -C $SLURM_TMPDIR
 fi
-if [[ $skip < 2 ]]; then
+if [[ $skip -lt 3 ]]; then
 echo "
 training: !!bool "true"
 device: "cuda"
@@ -105,20 +124,20 @@ data:
 ---   
 model:
     hidden: 768 #Number of LSTM hidden layer units
-    num_layer: 3 #Number of LSTM layers
+    num_layer: $num_layer #Number of LSTM layers
     proj: 256 #Embedding size
 ---
 train:
     N : 64 #Number of speakers in batch
     M : 10 #Number of utterances per speaker
     num_workers: 0 #number of workers for dataloader
-    lr: 0.01
+    lr: 0.1
     optimizer: SGD
     momentum: 0.9
     epochs: 950 #Max training speaker epoch 
     log_interval: 1 #Epochs before printing progress
     log_file: '$SLURM_TMPDIR/train.log'
-    checkpoint_interval: 120 #Save model after x speaker epochs
+    checkpoint_interval: 0 #Save model after x speaker epochs
     checkpoint_dir: '$SLURM_TMPDIR/checkpoint'
     restore: !!bool "false" #Resume training from previous model path
     loss_type: '$loss_type'
@@ -136,8 +155,8 @@ mv config/config.yaml "$SLURM_TMPDIR/config.train.yaml"
 fi
 
 # Step 3. Test speech embedder
-if [[ $skip < 3 ]];then
-for K in 10 5 1; do
+if [[ $skip < 4 ]];then
+for K in 5 1; do
 
 echo "
 training: !!bool "false"
@@ -158,7 +177,7 @@ data:
 ---   
 model:
     hidden: 768 #Number of LSTM hidden layer units
-    num_layer: 3 #Number of LSTM layers
+    num_layer: $num_layer #Number of LSTM layers
     proj: 256 #Embedding size
     model_path: '$SLURM_TMPDIR/checkpoint/final_epoch_950.model'
 ---
@@ -166,11 +185,11 @@ train:
     loss_type: '$loss_type'
 ---
 test:
-    N : 128 #Number of speakers in batch
+    N : 10 #Number of speakers in batch
     M : $(($K + 10)) #Number of utterances per speaker
     K : $K #Number of support set per speaker
     num_workers: 0 #number of workers for data laoder
-    epochs: 5 #testing speaker epochs
+    epochs: 10 #testing speaker epochs
     log_interval: 1 #Epochs before printing progress
     log_file: '$SLURM_TMPDIR/test.K$K.log'
 " > config/config.yaml
