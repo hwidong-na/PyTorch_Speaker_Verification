@@ -27,7 +27,6 @@ class SpeakerDatasetTIMIT(Dataset):
             self.path = hp.data.test_path_unprocessed
             self.utterance_number = hp.test.M
         self.speakers = glob.glob(os.path.dirname(self.path))
-        shuffle(self.speakers)
         
     def __len__(self):
         return len(self.speakers)
@@ -64,13 +63,8 @@ class SpeakerDatasetTIMITPreprocessed(Dataset):
         return len(self.file_list)
 
     def __getitem__(self, idx):
-        
-        np_file_list = os.listdir(self.path)
-        
-        if self.shuffle:
-            selected_file = random.sample(np_file_list, 1)[0]  # select random speaker
-        else:
-            selected_file = np_file_list[idx]               
+        assert idx < len(self.file_list) 
+        selected_file = self.file_list[idx]
         
         utters = np.load(os.path.join(self.path, selected_file))        # load utterance spectrogram of selected speaker
         if self.shuffle:
