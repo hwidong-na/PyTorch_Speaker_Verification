@@ -28,6 +28,7 @@ def train():
         train_dataset = SpeakerDatasetTIMITPreprocessed()
     else:
         train_dataset = SpeakerDatasetTIMIT()
+    # when trainining, it is fine to drop last if shuffled
     train_loader = DataLoader(train_dataset, batch_size=hp.train.N, shuffle=True, num_workers=hp.train.num_workers, drop_last=True) 
     
     if hp.train.restore:
@@ -65,18 +66,16 @@ def train():
         for batch_id, mel_db_batch in enumerate(train_loader): 
             mel_db_batch = mel_db_batch.to(device)
             
-            mel_db_batch = torch.reshape(mel_db_batch, (hp.train.N*hp.train.M, mel_db_batch.size(2), mel_db_batch.size(3)))
-            perm = random.sample(range(0, hp.train.N*hp.train.M), hp.train.N*hp.train.M)
-            unperm = list(perm)
-            for i,j in enumerate(perm):
-                unperm[j] = i
-            mel_db_batch = mel_db_batch[perm]
+            n_spk = mel_db_batch.size(0)
+            n_utt = mel_db_batch.size(1)
+            n_seq = mel_db_batch.size(2)
+            n_dim = mel_db_batch.size(3)
+            mel_db_batch = mel_db_batch.view(n_spk*n_utt, n_seq, n_dim)
             #gradient accumulates
             optimizer.zero_grad()
             
             embeddings = embedder_net(mel_db_batch)
-            embeddings = embeddings[unperm]
-            embeddings = torch.reshape(embeddings, (hp.train.N, hp.train.M, embeddings.size(1)))
+            embeddings = embeddings.view(n_spk, n_utt, embeddings.size(1))
             
             #get loss, call backward, step optimizer
             loss = loss_net(embeddings) #wants (Speaker, Utterances, embedding)
@@ -101,7 +100,6 @@ def train():
             ckpt_model_path = os.path.join(hp.train.checkpoint_dir, ckpt_model_filename)
             torch.save(embedder_net.state_dict(), ckpt_model_path)
             embedder_net.to(device).train()
-
     #save model
     embedder_net.eval().cpu()
     save_model_filename = "final_epoch_" + str(e + 1) + ".model"
@@ -117,7 +115,8 @@ def test():
         test_dataset = SpeakerDatasetTIMITPreprocessed()
     else:
         test_dataset = SpeakerDatasetTIMIT()
-    test_loader = DataLoader(test_dataset, batch_size=hp.test.N, shuffle=True, num_workers=hp.test.num_workers, drop_last=True)
+    # do not drop last even if shuffled
+    test_loader = DataLoader(test_dataset, batch_size=hp.test.N, shuffle=True, num_workers=hp.test.num_workers, drop_last=False)
     
     if hp.train.loss_type == "euclidean":
         embedder_net = SpeechEmbedderV2().to(device)
@@ -131,18 +130,23 @@ def test():
         batch_avg_EER = 0
         for batch_id, mel_db_batch in enumerate(test_loader):
             mel_db_batch = mel_db_batch.to(device)
-            #TODO(hwidong.na): k-shot test
+            # k-shot test
             #TODO(hwidong.na): randomize enrollment / verification
             assert hp.test.M > hp.test.K
-            perm = random.sample(range(0,hp.test.N*hp.test.M), hp.test.N*hp.test.M)
-            unperm = list(perm)
-            for i,j in enumerate(perm):
-                unperm[j] = i
-            mel_db_batch = mel_db_batch.view(hp.test.N*hp.test.M, mel_db_batch.size(2), mel_db_batch.size(3))
-            mel_db_batch = mel_db_batch[perm]
+            n_spk = mel_db_batch.size(0)
+            n_utt = mel_db_batch.size(1)
+            n_seq = mel_db_batch.size(2)
+            n_dim = mel_db_batch.size(3)
+
+            # perm = random.sample(range(0,hp.test.N*hp.test.M), hp.test.N*hp.test.M)
+            # unperm = list(perm)
+            # for i,j in enumerate(perm):
+            #     unperm[j] = i
+            mel_db_batch = mel_db_batch.view(n_spk*n_utt, n_seq, n_dim)
+            # mel_db_batch = mel_db_batch[perm]
             embeddings = embedder_net(mel_db_batch)
-            embeddings = embeddings[unperm]
-            embeddings = torch.reshape(embeddings, (hp.test.N, hp.test.M, embeddings.size(1)))
+            # embeddings = embeddings[unperm]
+            embeddings = embeddings.view(n_spk, n_utt, embeddings.size(1))
 
             enrollment_embeddings = embeddings[:,:hp.test.K,:]
             enrollment_centroids = get_centroids(enrollment_embeddings)
@@ -167,12 +171,12 @@ def test():
                 pred = lambda i: matrix_thresh[i].float().sum()
                 true = lambda i: matrix_thresh[i,:,i].float().sum()
                 false_acceptance = lambda i: pred(i) - true(i)
-                FAR = (sum([false_acceptance(i) for i in range(int(hp.test.N))])
-                /(hp.test.N-1.0)/(float(MminusK))/hp.test.N)
+                FAR = (sum([false_acceptance(i) for i in range(int(n_spk))])
+                /(n_spk-1.0)/(float(MminusK))/n_spk)
     
                 false_rejection = lambda i: MminusK - true(i)
-                FRR = (sum([false_rejection(i) for i in range(int(hp.test.N))])
-                /(float(MminusK))/hp.test.N)
+                FRR = (sum([false_rejection(i) for i in range(int(n_spk))])
+                /(float(MminusK))/n_spk)
                 
                 # Save threshold when FAR = FRR (=EER)
                 if diff> abs(FAR-FRR):
