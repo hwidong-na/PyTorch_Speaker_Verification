@@ -9,6 +9,8 @@ Created on Wed Sep  5 20:58:34 2018
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.nn.utils.rnn import pack_padded_sequence 
+from torch.nn.utils.rnn import pad_packed_sequence
 
 from hparam import hparam as hp
 from utils import get_centroids, get_cossim, calc_loss, get_distance, calc_contrast_loss, calc_loss_euclidean
@@ -89,3 +91,27 @@ class EuclideanDistanceLoss(nn.Module):
         d_matrix = distance.to(self.device)
         loss, _ = calc_loss_euclidean(d_matrix)
         return loss
+
+class SpeechEmbedderV3(SpeechEmbedderV2):
+    
+    def forward(self, X):
+        # https://towardsdatascience.com/taming-lstms-variable-sized-mini-batches-and-why-pytorch-is-good-for-your-health-61d35642972e
+        padded_X, length_X = X
+        packed_Xs = pack_padded_sequence(padded_X, length_X,
+                                         batch_first=True, enforce_sorted=False)
+        X, _ = self.LSTM_stack(packed_Xs.float()) #(batch, frames, n_mels)
+        X, _ = pad_packed_sequence(X, batch_first=True)
+            
+        #only use last frame
+        #https://discuss.pytorch.org/t/how-to-extract-the-last-output-of-lstms/15519
+        arange = torch.arange(0, padded_X.size(0), dtype=torch.int64)
+        X = X[arange, length_X-1]
+        X = self.projection(X.float())
+        s = F.softplus(self.scale(X))
+        X = F.normalize(X, p=2, dim=1)
+        return X/s
+
+class AutoVCLoss(GE2ELoss):
+
+    def __init__(self, device):
+        super(AutoVCLoss, self).__init__(device)

@@ -77,3 +77,46 @@ class SpeakerDatasetTIMITPreprocessed(Dataset):
 
         utterance = torch.tensor(np.transpose(utterance, axes=(0,2,1)))     # transpose [batch, frames, n_mels]
         return utterance
+
+class SpeakerDatasetSpectrogram(Dataset):
+    
+    def __init__(self, shuffle=True, utter_start=0, pad_token=0):
+        
+        # data path
+        if hp.training:
+            self.path = hp.data.train_path
+            self.utter_num = hp.train.M
+        else:
+            self.path = hp.data.test_path
+            self.utter_num = hp.test.M
+        self.spk_list = os.listdir(self.path)
+        self.shuffle=shuffle
+        self.utter_start = utter_start
+        self.pad_token = pad_token
+        
+    def __len__(self):
+        return len(self.spk_list)
+
+    def __getitem__(self, idx):
+        assert idx < len(self.spk_list) 
+        selected_spk = self.spk_list[idx]
+        spk_path = os.path.join(self.path, selected_spk)
+        X = []
+        for utter_path in os.listdir(spk_path):
+            utter = np.load(os.path.join(spk_path, utter_path))        # load spectrogram of selected speaker
+            X.append(np.transpose(utter, axes=(1,0)))
+
+        if self.shuffle:
+            random.shuffle(X)
+
+        X = X[self.utter_start: self.utter_start+self.utter_num] # select M per speaker
+        return X
+        #length = lambda u: u.size(0)
+        #X.sort(key=length)
+        #n_mels = hp.data.nmels
+        #lens = map(length, X)
+        ##padding
+        #padded_X = torch.ones((self.utter_num, max(lens), n_mels)) * self.pad_token
+        #for i, s in enumerate(X):
+        #    padded_X[i, :lens[i]] = s
+        #return X, lens

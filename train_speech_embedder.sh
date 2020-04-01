@@ -52,11 +52,13 @@ echo "working dir: `pwd`"
 echo "output dir: $SCRATCH/$JOBID"
 rm -rf PyTorch_Speaker_Verification
 git clone $HOME/PyTorch_Speaker_Verification
+# avoid unnecessary commit
+cp $HOME/PyTorch_Speaker_Verification/*.py PyTorch_Speaker_Verification
 cd PyTorch_Speaker_Verification
 
 # Step 1. Prepare data
 if [[ $skip -lt 1 ]]; then
-unzip -n $SCRATCH/darpa-timit-acousticphonetic-continuous-speech.zip -d $SLURM_TMPDIR
+unzip -n $SCRATCH/TIMIT.zip -d $SLURM_TMPDIR
 fi
 
 # Step 2. Preprocess data
@@ -68,10 +70,10 @@ echo "\
 data:
     train_path: '$SLURM_TMPDIR/train_tisv'
     train_N: 10000
-    train_path_unprocessed: '$SLURM_TMPDIR/data/TRAIN/*/*/*.wav'
+    train_path_unprocessed: '$SLURM_TMPDIR/TRAIN/*/*/*.wav'
     test_N: 250
     test_path: '$SLURM_TMPDIR/test_tisv'
-    test_path_unprocessed: '$SLURM_TMPDIR/data/TEST/*/*/*.wav'
+    test_path_unprocessed: '$SLURM_TMPDIR/TEST/*/*/*.wav'
     data_preprocessed: !!bool "true" 
     sr: 16000
     nfft: 512 #For mel spectrogram preprocess
@@ -111,7 +113,6 @@ device: "cuda"
 ---
 data:
     train_path: '$SLURM_TMPDIR/train_tisv'
-    train_path_unprocessed: '$SLURM_TMPDIR/data/TRAIN/*/*/*.wav'
     data_preprocessed: !!bool "true" 
     sr: 16000
     nfft: 512 #For mel spectrogram preprocess
@@ -128,7 +129,7 @@ model:
     proj: 256 #Embedding size
 ---
 train:
-    N : 64 #Number of speakers in batch
+    N : 32 #Number of speakers in batch
     M : 10 #Number of utterances per speaker
     num_workers: 0 #number of workers for dataloader
     lr: 0.1
@@ -164,7 +165,6 @@ device: "cuda"
 ---
 data:
     test_path: '$SLURM_TMPDIR/test_tisv'
-    test_path_unprocessed: '$SLURM_TMPDIR/data/TEST/*/*/*.wav'
     data_preprocessed: !!bool "true" 
     sr: 16000
     nfft: 512 #For mel spectrogram preprocess
