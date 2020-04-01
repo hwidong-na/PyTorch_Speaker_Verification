@@ -111,7 +111,7 @@ class SpeechEmbedderV3(SpeechEmbedderV2):
         X = F.normalize(X, p=2, dim=1)
         return X/s
 
-class AutoVCLoss(GE2ELoss):
+class AutoVCLoss(EuclideanDistanceLoss):
 
     def __init__(self, device):
         super(AutoVCLoss, self).__init__(device)

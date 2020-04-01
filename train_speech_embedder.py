@@ -223,7 +223,10 @@ def test():
         test_dataset = SpeakerDatasetTIMIT()
     test_loader = DataLoader(test_dataset, batch_size=hp.test.N, shuffle=True, num_workers=hp.test.num_workers, drop_last=True)
     
-    if hp.train.loss_type == "euclidean":
+    if hp.train.loss_type == "autovc":
+        embedder_net = SpeechEmbedderV3().to(device)
+        loss_net = AutoVCLoss(device)
+    elif hp.train.loss_type == "euclidean":
         embedder_net = SpeechEmbedderV2().to(device)
     else:
         embedder_net = SpeechEmbedder().to(device)
@@ -238,24 +241,26 @@ def test():
     sum_EER = 0
     total = 0
     for e in range(hp.test.epochs):
-        for batch_id, mel_db_batch in enumerate(test_loader):
-            mel_db_batch = mel_db_batch.to(device)
+        for batch_id, (padded_Xs, length_Xs) in enumerate(train_loader): 
+            padded_Xs = padded_Xs.to(device)
+            length_Xs = length_Xs.to(device)
             # N.B. utterances are shuffled in SpeakerDatasetTIMIT*
             # k-shot test, k is the number enrollment utterences
             assert hp.test.M > hp.test.K
-            n_spk = mel_db_batch.size(0)
-            n_utt = mel_db_batch.size(1)
-            n_seq = mel_db_batch.size(2)
-            n_dim = mel_db_batch.size(3)
-
-            mel_db_batch = mel_db_batch.view(n_spk*n_utt, n_seq, n_dim)
-            embeddings = embedder_net(mel_db_batch)
+            n_spk = padded_Xs.size(0)
+            n_utt = padded_Xs.size(1)
+            n_seq = padded_Xs.size(2)
+            n_dim = padded_Xs.size(3)
+            padded_X = padded_Xs.view(n_spk*n_utt, n_seq, n_dim)
+            length_X = length_Xs.view(n_spk*n_utt)
+            
+            embeddings = embedder_net((padded_X, length_X))
             embeddings = embeddings.view(n_spk, n_utt, embeddings.size(1))
 
             enrollment_embeddings = embeddings[:,:hp.test.K,:]
             enrollment_centroids = get_centroids(enrollment_embeddings)
             verification_embeddings = embeddings[:,hp.test.K:,:]
-            if hp.train.loss_type == "euclidean":
+            if hp.train.loss_type in ("euclidean", "autovc",):
                 d_matrix = get_distance_forall(verification_embeddings, enrollment_centroids)
                 # because the distance is not bounded, need to normalize
                 d_matrix = F.normalize(d_matrix, dim=2)

@@ -49,6 +49,13 @@ from hparam import hparam as hp
 #         print(utterances_spec.shape)
 #         np.save(os.path.join(output_path, "speaker%d.npy"%i), utterances_spec)
 
+def vad_merge(w):
+    intervals = librosa.effects.split(w, top_db=30)
+    temp = list()
+    for s, e in intervals:
+        temp.append(w[s:e])
+    return np.concatenate(temp, axis=None)
+
 def save_spectrogram_tisv(input_path, output_path, train=True):
     """ The log-mel-spectrogram is saved as numpy file.
     """
@@ -71,6 +78,7 @@ def save_spectrogram_tisv(input_path, output_path, train=True):
             if utter_name[-4:] == '.WAV':
                 utter_path = os.path.join(folder, utter_name)         # path of each utterance
                 utter, sr = librosa.core.load(utter_path, hp.data.sr)        # load utterance audio
+                utter = vad_merge(utter)                              # voice activity detection 
                 S = librosa.core.stft(y=utter, n_fft=hp.data.nfft,
                                       win_length=int(hp.data.window * sr), hop_length=int(hp.data.hop * sr))
                 S = np.abs(S) ** 2

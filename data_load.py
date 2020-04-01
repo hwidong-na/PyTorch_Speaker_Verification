@@ -106,17 +106,9 @@ class SpeakerDatasetSpectrogram(Dataset):
             utter = np.load(os.path.join(spk_path, utter_path))        # load spectrogram of selected speaker
             X.append(np.transpose(utter, axes=(1,0)))
 
+        assert len(X) > 0
         if self.shuffle:
             random.shuffle(X)
 
         X = X[self.utter_start: self.utter_start+self.utter_num] # select M per speaker
         return X
-        #length = lambda u: u.size(0)
-        #X.sort(key=length)
-        #n_mels = hp.data.nmels
-        #lens = map(length, X)
-        ##padding
-        #padded_X = torch.ones((self.utter_num, max(lens), n_mels)) * self.pad_token
-        #for i, s in enumerate(X):
-        #    padded_X[i, :lens[i]] = s
-        #return X, lens

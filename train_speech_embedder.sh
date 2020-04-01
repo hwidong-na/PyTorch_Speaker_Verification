@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --account=rpp-bengioy            # Yoshua pays for your job
+#SBATCH --account=rrg-bengioy-ad_gpu     # Yoshua pays for your job
 #SBATCH --cpus-per-task=10               # Ask for 10 CPUs
 #SBATCH --gres=gpu:1                     # Ask for 1 GPU
 #SBATCH --mem=32G                        # Ask for 32 GB of RAM
@@ -28,7 +28,7 @@ if [[ $3 ]]; then
 loss_type=$3
 fi
 if [[ ! $loss_type ]]; then
-loss_type='euclidean'
+loss_type='autovc'
 fi
 echo "loss type: $loss_type"
 
