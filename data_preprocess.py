@@ -66,7 +66,6 @@ def save_spectrogram_tisv(input_path, output_path, train=True):
     audio_path = glob.glob(os.path.dirname(input_path))
     os.makedirs(output_path, exist_ok=True)   # make folder to save file
 
-    utter_min_len = (hp.data.tisv_frame * hp.data.hop + hp.data.window) * hp.data.sr    # lower bound of utterance length
     total_speaker_num = len(audio_path)
     print("total speaker number : %d"%total_speaker_num)
     for i, folder in enumerate(audio_path):

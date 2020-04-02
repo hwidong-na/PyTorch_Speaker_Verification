@@ -1,4 +1,5 @@
 #!/bin/bash
+#SBATCH --job-name=embedding
 #SBATCH --account=rrg-bengioy-ad_gpu     # Yoshua pays for your job
 #SBATCH --cpus-per-task=10               # Ask for 10 CPUs
 #SBATCH --gres=gpu:1                     # Ask for 1 GPU
@@ -40,8 +41,6 @@ num_layer=3
 fi
 echo "num layer: $num_layer"
 
-mixing_alpha=0.5
-
 # Step 0. Prepare environment
 source $HOME/python3.8/bin/activate
 JOBID=`basename $SLURM_TMPDIR`
@@ -53,7 +52,9 @@ echo "output dir: $SCRATCH/$JOBID"
 rm -rf PyTorch_Speaker_Verification
 git clone $HOME/PyTorch_Speaker_Verification
 # avoid unnecessary commit
-cp $HOME/PyTorch_Speaker_Verification/*.py PyTorch_Speaker_Verification
+if [[ $skip ]]; then
+    cp $HOME/PyTorch_Speaker_Verification/*.py PyTorch_Speaker_Verification
+fi
 cd PyTorch_Speaker_Verification
 
 # Step 1. Prepare data
@@ -69,9 +70,7 @@ if [[ $skip -lt 2 ]]; then
 echo "\
 data:
     train_path: '$SLURM_TMPDIR/train_tisv'
-    train_N: 10000
     train_path_unprocessed: '$SLURM_TMPDIR/TRAIN/*/*/*.wav'
-    test_N: 250
     test_path: '$SLURM_TMPDIR/test_tisv'
     test_path_unprocessed: '$SLURM_TMPDIR/TEST/*/*/*.wav'
     data_preprocessed: !!bool "true" 
@@ -80,13 +79,8 @@ data:
     window: 0.025 #(s)
     hop: 0.01 #(s)
     nmels: 40 #Number of mel energies
-    tisv_frame: 180 #Max number of time steps in input after preprocess
-    tisv_frame_min: 140 #Min number of time steps in input after preprocess
-    tisv_frame_max: 180 #Max number of time steps in input after preprocess
-    mixing_alpha: $mixing_alpha #for mixing
     num_workers: 1 #number of workers/cpu for data_preprocessor
     log_file: '$SLURM_TMPDIR/data.log'
-    wav_path: '$SLURM_TMPDIR/wav'
 
 " > config/config.yaml
 
@@ -119,9 +113,6 @@ data:
     window: 0.025 #(s)
     hop: 0.01 #(s)
     nmels: 40 #Number of mel energies
-    tisv_frame: 180 #Max number of time steps in input after preprocess
-    tisv_frame_min: 140 #Min number of time steps in input after preprocess
-    tisv_frame_max: 180 #Max number of time steps in input after preprocess
 ---   
 model:
     hidden: 768 #Number of LSTM hidden layer units
@@ -135,14 +126,24 @@ train:
     lr: 0.1
     optimizer: SGD
     momentum: 0.9
-    epochs: 950 #Max training speaker epoch 
-    log_interval: 1 #Epochs before printing progress
+    epochs: 550 #Max training speaker epoch 
+    log_interval: 5 #Epochs before printing progress
     log_file: '$SLURM_TMPDIR/train.log'
-    checkpoint_interval: 0 #Save model after x speaker epochs
+    checkpoint_interval: 100 #Save model after x speaker epochs
     checkpoint_dir: '$SLURM_TMPDIR/checkpoint'
     restore: !!bool "false" #Resume training from previous model path
     loss_type: '$loss_type'
 " > config/config.yaml
+
+#(while :; do sleep 3; echo "a"; done)
+(
+cd $SLURM_TMPDIR
+while : 
+do
+    sleep 600 # store partial results every 10 min
+    tar zcvf $SCRATCH/$JOBID/model.tgz
+done 
+) &
 
 python train_speech_embedder.py
 ret=$?
@@ -171,15 +172,12 @@ data:
     window: 0.025 #(s)
     hop: 0.01 #(s)
     nmels: 40 #Number of mel energies
-    tisv_frame: 180 #Max number of time steps in input after preprocess
-    tisv_frame_min: 140 #Min number of time steps in input after preprocess
-    tisv_frame_max: 180 #Max number of time steps in input after preprocess
 ---   
 model:
     hidden: 768 #Number of LSTM hidden layer units
     num_layer: $num_layer #Number of LSTM layers
     proj: 256 #Embedding size
-    model_path: '$SLURM_TMPDIR/checkpoint/final_epoch_950.model'
+    model_path: '$SLURM_TMPDIR/checkpoint/final_epoch_550.model'
 ---
 train:
     loss_type: '$loss_type'

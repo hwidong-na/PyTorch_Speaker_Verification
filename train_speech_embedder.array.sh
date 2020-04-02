@@ -13,12 +13,14 @@ source $HOME/python3.8/bin/activate
 echo "Running task $SLURM_ARRAY_TASK_ID"
 echo "SLURM_TMPDIR: $SLURM_TMPDIR"
 if [[ $SLURM_ARRAY_TASK_ID == 0 ]];then 
-loss_type=softmax
+loss_type=autovc
 elif [[ $SLURM_ARRAY_TASK_ID == 1 ]];then 
 loss_type=euclidean
-elif [[ $SLURM_ARRAY_TASK_ID == 2 ]];then 
+if [[ $SLURM_ARRAY_TASK_ID == 2 ]];then 
+loss_type=softmax
+elif [[ $SLURM_ARRAY_TASK_ID == 3 ]];then 
 loss_type=contrast
 fi
 # using same dataset
-echo $HOME/PyTorch_Speaker_Verification/train_speech_embedder.sh 1 $SCRATCH/nahwidon.6509661.0/ $loss_type 5
-$HOME/PyTorch_Speaker_Verification/train_speech_embedder.sh 1 $SCRATCH/nahwidon.6509661.0/ $loss_type 5
+echo $HOME/PyTorch_Speaker_Verification/train_speech_embedder.sh 1 $SCRATCH/nahwidon.6588234.0 $loss_type
+$HOME/PyTorch_Speaker_Verification/train_speech_embedder.sh 1 $SCRATCH/nahwidon.6588234.0 $loss_type
