@@ -14,6 +14,7 @@ from torch.nn.utils.rnn import pad_packed_sequence
 
 from hparam import hparam as hp
 from utils import get_centroids, get_cossim, calc_loss, get_distance, calc_contrast_loss, calc_loss_euclidean
+from model_vc import Generator
 
 class SpeechEmbedder(nn.Module):
     
@@ -93,12 +94,29 @@ class EuclideanDistanceLoss(nn.Module):
         return loss
 
 class SpeechEmbedderV3(SpeechEmbedderV2):
+    def __init__(self):
+        super(SpeechEmbedderV3, self).__init__()    
+        self.dim_neck = hp.autovc.dim_neck
+        self.dim_emb = hp.model.proj
+        self.dim_pre = hp.autovc.dim_pre
+        self.freq = hp.autovc.freq
+
+        self.G = Generator(self.dim_neck, self.dim_emb, self.dim_pre, self.freq)
     
+    def train(self, mode=True):
+        self.G.train(mode)
+        return super(SpeechEmbedderV3, self).train(mode)
+
+    def to(self, device):
+        self.G = self.G.to(device)
+        return super(SpeechEmbedderV3, self).to(device)
+
     def forward(self, X):
         # https://towardsdatascience.com/taming-lstms-variable-sized-mini-batches-and-why-pytorch-is-good-for-your-health-61d35642972e
         padded_X, length_X = X
         packed_Xs = pack_padded_sequence(padded_X, length_X,
                                          batch_first=True, enforce_sorted=False)
+        self.LSTM_stack.flatten_parameters()
         X, _ = self.LSTM_stack(packed_Xs.float()) #(batch, frames, n_mels)
         X, _ = pad_packed_sequence(X, batch_first=True)
             
@@ -109,9 +127,15 @@ class SpeechEmbedderV3(SpeechEmbedderV2):
         X = self.projection(X.float())
         s = F.softplus(self.scale(X))
         X = F.normalize(X, p=2, dim=1)
-        return X/s
+        S_X = X/s
+        ##TODO(hwidongna): AutoVC
+        X_tilda, X_hat, C_X = self.G(padded_X, length_X, S_X, S_X)
+        C_hat = self.G(X_hat, length_X, S_X, None)
+        return X_tilda, X_hat, C_X, C_hat, S_X
+
 
 class AutoVCLoss(EuclideanDistanceLoss):
 
     def __init__(self, device):
         super(AutoVCLoss, self).__init__(device)
+

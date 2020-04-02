@@ -25,6 +25,7 @@ prevexp=$2
 echo "previous expermiment: $prevexp"
 fi
 
+# GE2E configuration
 if [[ $3 ]]; then
 loss_type=$3
 fi
@@ -40,6 +41,36 @@ if [[ ! $num_layer ]]; then
 num_layer=3
 fi
 echo "num layer: $num_layer"
+
+# AucoVC configuration
+if [[ $5 ]]; then
+num_conv=$5
+fi
+if [[ ! $num_conv ]]; then
+num_conv=3
+fi
+echo "num conv: $num_conv"
+if [[ $6 ]]; then
+num_enc=$6
+fi
+if [[ ! $num_enc ]]; then
+num_enc=2
+fi
+echo "num enc: $num_enc"
+if [[ $7 ]]; then
+num_dec=$7
+fi
+if [[ ! $num_dec ]]; then
+num_dec=3
+fi
+echo "num dec: $num_dec"
+if [[ $8 ]]; then
+num_post=$8
+fi
+if [[ ! $num_post ]]; then
+num_post=3
+fi
+echo "num post: $num_post"
 
 # Step 0. Prepare environment
 source $HOME/python3.8/bin/activate
@@ -119,9 +150,21 @@ model:
     num_layer: $num_layer #Number of LSTM layers
     proj: 256 #Embedding size
 ---
+autovc:
+    channel: 512 #Number of channels in Conv Layer units
+    kernel: 5 #Kernel size in Conv Layer units
+    num_conv: $num_conv #Number of Conv layers
+    num_enc: $num_enc #Number of LSTM layers in encoder
+    dim_neck: 32 # Bottlenect dimension
+    num_dec: $num_dec #Number of LSTM layers in decoder
+    dim_pre: 512 # Number of LSTM hidden layer units
+    num_post: $num_post #Number of LSTM layers in post
+    proj: 1024 # ?
+    freq: 16     # Down sample frequency
+---
 train:
     N : 32 #Number of speakers in batch
-    M : 10 #Number of utterances per speaker
+    M : 4 #Number of utterances per speaker
     num_workers: 0 #number of workers for dataloader
     lr: 0.1
     optimizer: SGD
@@ -144,11 +187,14 @@ do
     tar zcvf $SCRATCH/$JOBID/model.tgz
 done 
 ) &
+pid=$!
 
 python train_speech_embedder.py
 ret=$?
 if [[ $ret -ne 0 ]];then
 echo "terminate python train_speech_embedder.py"
+kill -9 $pid
+killall sleep
 exit $ret
 fi
 

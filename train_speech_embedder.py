@@ -91,11 +91,23 @@ def train():
             #gradient accumulates
             optimizer.zero_grad()
             
-            embeddings = embedder_net((padded_X, length_X))
+            X_tilda, X_hat, C_X, C_hat, embeddings = embedder_net((padded_X, length_X))
+            # X_tilda = X_tilda.view(n_spk, n_utt, X_tilda.size(1))
+            # X_hat = X_hat.view(n_spk, n_utt, X_hat.size(1))
+            # C_X = C_X.view(n_spk, n_utt, C_X.size(1))
             embeddings = embeddings.view(n_spk, n_utt, embeddings.size(1))
             
             #get loss, call backward, step optimizer
+            #TODO(hwidonna): masking
+            loss_self1 = F.mse_loss(X_hat, padded_X)
+            loss_self2 = F.mse_loss(X_tilda, padded_X)
+            loss_content = F.l1_loss(C_X, C_hat)
+
             loss = loss_net(embeddings) #wants (Speaker, Utterances, embedding)
+            loss += loss_self1
+            loss += loss_self2
+            loss += loss_content
+
             loss.backward()
             torch.nn.utils.clip_grad_norm_(embedder_net.parameters(), 3.0)
             torch.nn.utils.clip_grad_norm_(loss_net.parameters(), 1.0)
