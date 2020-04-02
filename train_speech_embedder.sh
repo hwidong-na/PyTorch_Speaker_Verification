@@ -184,7 +184,7 @@ train:
 ---
 test:
     N : 10 #Number of speakers in batch
-    M : $(($K + 10)) #Number of utterances per speaker
+    M : $(($K + 5)) #Number of utterances per speaker
     K : $K #Number of support set per speaker
     num_workers: 0 #number of workers for data laoder
     epochs: 10 #testing speaker epochs

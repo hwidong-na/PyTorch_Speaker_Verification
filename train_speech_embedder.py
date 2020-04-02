@@ -27,7 +27,7 @@ def custom_collate(Xs):
     # x.shape = (n_seq, n_dim)
     length_Xs = torch.tensor([tuple(x.shape[0] for x in X) for X in Xs])
     batch_max_len = torch.max(length_Xs)
-    padded_Xs = torch.zeros((hp.train.N, hp.train.M, batch_max_len, n_dim))
+    padded_Xs = torch.zeros((length_Xs.size(0), length_Xs.size(1), batch_max_len, n_dim))
     
     for i, X in enumerate(Xs):
         lens = length_Xs[i]
@@ -217,12 +217,11 @@ def train():
 def test():
     device = torch.device(hp.device)
     
-    if hp.data.data_preprocessed:
-        test_dataset = SpeakerDatasetTIMITPreprocessed()
-    else:
-        test_dataset = SpeakerDatasetTIMIT()
-    test_loader = DataLoader(test_dataset, batch_size=hp.test.N, shuffle=True, num_workers=hp.test.num_workers, drop_last=True)
-    
+    test_dataset = SpeakerDatasetSpectrogram()
+    test_loader = DataLoader(test_dataset, batch_size=hp.test.N,
+                              shuffle=True, collate_fn=custom_collate,
+                              num_workers=hp.test.num_workers, drop_last=True) 
+
     if hp.train.loss_type == "autovc":
         embedder_net = SpeechEmbedderV3().to(device)
         loss_net = AutoVCLoss(device)
@@ -241,7 +240,7 @@ def test():
     sum_EER = 0
     total = 0
     for e in range(hp.test.epochs):
-        for batch_id, (padded_Xs, length_Xs) in enumerate(train_loader): 
+        for batch_id, (padded_Xs, length_Xs) in enumerate(test_loader): 
             padded_Xs = padded_Xs.to(device)
             length_Xs = length_Xs.to(device)
             # N.B. utterances are shuffled in SpeakerDatasetTIMIT*
@@ -270,7 +269,7 @@ def test():
                 threshold_fn = lambda thres: sim_matrix > thres
             # calculate ERR excluding enrollment
             
-            MminusK = hp.test.M-hp.test.K
+            n_tst = verification_embeddings.size(1)
             # calculating EER
             diff = 1 + 1e-6; EER=1; EER_thresh = 1; EER_FAR=1; EER_FRR=1
             
@@ -281,11 +280,11 @@ def test():
                 true = lambda i: matrix_thresh[i,:,i].float().sum()
                 false_acceptance = lambda i: pred(i) - true(i)
                 FAR = (sum([false_acceptance(i) for i in range(int(n_spk))])
-                /(n_spk-1.0)/(float(MminusK))/n_spk)
+                /(n_spk-1.0)/(float(n_tst))/n_spk)
     
-                false_rejection = lambda i: MminusK - true(i)
+                false_rejection = lambda i: n_tst - true(i)
                 FRR = (sum([false_rejection(i) for i in range(int(n_spk))])
-                /(float(MminusK))/n_spk)
+                /(float(n_tst))/n_spk)
                 
                 # Save threshold when FAR = FRR (=EER)
                 if diff> abs(FAR-FRR):
