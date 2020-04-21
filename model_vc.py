@@ -43,10 +43,26 @@ class ConvNorm(torch.nn.Module):
         return conv_signal
 
 
+class AdaIN(torch.nn.Module):
+    def forward(self, x, y):
+        """
+        Normalize x using y
+        """
+        # x: (batch, seq, dim_x)
+        # y: (batch, dim_y)
+        N = x.size(0)
+        assert N == y.size(0)
+        mean_x = x.mean(dim=-1, keepdim=True)
+        mean_y = y.mean(dim=-1).reshape(N,1,1)
+        # std_x = x.std(dim=-1)
+        std_x = torch.sum((x - mean_x)**2 + 1e-6, dim=-1, keepdim=True)
+        std_y = y.std(dim=-1).reshape(N,1,1)
+        return std_y * (x - mean_x) + mean_y
+
 class Encoder(nn.Module):
     """Encoder module:
     """
-    def __init__(self, dim_neck, dim_emb, freq):
+    def __init__(self, dim_neck, freq):
         super(Encoder, self).__init__()
         n_mels = hp.data.nmels
         channel = hp.autovc.channel
@@ -56,10 +72,12 @@ class Encoder(nn.Module):
         self.dim_neck = dim_neck
         self.freq = freq
         
+        self.adain = AdaIN()
+
         convolutions = []
         for i in range(num_conv):
             conv_layer = nn.Sequential(
-                ConvNorm(n_mels+dim_emb if i==0 else channel,
+                ConvNorm(n_mels if i==0 else channel,
                          channel,
                          kernel_size=kernel, stride=1,
                          padding=kernel//2,
@@ -76,9 +94,10 @@ class Encoder(nn.Module):
         # c_org.shape = (batch, dim_s)
         n_seq = x.size(1)
         x = x.squeeze(1).transpose(2,1)
-        c_org = c_org.unsqueeze(-1).expand(-1, -1, x.size(-1))
-        # x.shape = (batch, dim_x+dim_s, seq)
-        x = torch.cat((x, c_org), dim=1)
+        # c_org = c_org.unsqueeze(-1).expand(-1, -1, x.size(-1))
+        # # x.shape = (batch, dim_x+dim_s, seq)
+        # x = torch.cat((x, c_org), dim=1)
+        x = self.adain(x, c_org)
         
         for conv in self.convolutions:
             x = F.relu(conv(x))
@@ -95,25 +114,25 @@ class Encoder(nn.Module):
         out_b = outputs[:, :, self.dim_neck:]
         
         codes = []
-        #TODO(hwidongna): need padding at the end of utterance?
         for i in range(0, n_seq, self.freq):
             if i + self.freq < n_seq:
                 codes.append(torch.cat((out_f[:,i+self.freq-1,:],out_b[:,i,:]), dim=-1))
             else:
                 codes.append(torch.cat((out_f[:,n_seq-1,:],out_b[:,i,:]), dim=-1))
-        return codes
-      
+        return torch.cat([c.unsqueeze(1) for c in codes], dim=1)
         
 class Decoder(nn.Module):
     """Decoder module:
     """
-    def __init__(self, dim_neck, dim_emb, dim_pre):
+    def __init__(self, dim_neck, dim_pre):
         super(Decoder, self).__init__()
         n_mels = hp.data.nmels
         proj = hp.autovc.proj
         num_dec = hp.autovc.num_dec
+
+        self.adain = AdaIN()
         
-        self.lstm1 = nn.LSTM(dim_neck*2+dim_emb, dim_pre, 1, batch_first=True)
+        self.lstm1 = nn.LSTM(dim_neck*2, dim_pre, 1, batch_first=True)
         
         convolutions = []
         for i in range(3):
@@ -132,16 +151,16 @@ class Decoder(nn.Module):
         self.linear_projection = LinearNorm(proj, n_mels)
 
     def forward(self, codes, length, c_trg):
-        tmp = []
         freq = hp.autovc.freq
-        # each code.shape = (batch, dim_c)
-        for code in codes:
-            tmp.append(code.unsqueeze(1).expand(-1,freq,-1))
-        code_exp = torch.cat(tmp, dim=1)
+        N, T, D = codes.shape
+        code_exp = codes.unsqueeze(2).expand(-1,-1,freq,-1).reshape(N,T*freq,D)
         
-        # [batch, seq, dim_c] -> [batch, seq, dim_x]
-        x = torch.cat((code_exp, c_trg.unsqueeze(1).expand(-1,code_exp.size(1),-1)), dim=-1)
-        #self.lstm1.flatten_parameters()
+        # [batch, seq, dim_c] -> [batch, seq, dim_c+dim_s]
+        # x = torch.cat((code_exp, c_trg.unsqueeze(1).expand(-1,code_exp.size(1),-1)), dim=-1)
+        x = code_exp
+        x = self.adain(x, c_trg)
+        self.lstm1.flatten_parameters()
+        
         packed_X = pack_padded_sequence(x, length, batch_first=True, enforce_sorted=False)
         x, _ = self.lstm1(packed_X)
         x, _ = pad_packed_sequence(x, batch_first=True)
@@ -151,6 +170,8 @@ class Decoder(nn.Module):
             x = F.relu(conv(x))
         x = x.transpose(1, 2)
         
+        self.lstm2.flatten_parameters()
+       
         packed_X = pack_padded_sequence(x, length, batch_first=True, enforce_sorted=False)
         outputs, _ = self.lstm2(packed_X)
         outputs, _ = pad_packed_sequence(outputs, batch_first=True)
@@ -213,29 +234,35 @@ class Postnet(nn.Module):
 
 class Generator(nn.Module):
     """Generator network."""
-    def __init__(self, dim_neck, dim_emb, dim_pre, freq):
+    def __init__(self, dim_neck, dim_pre, freq):
         super(Generator, self).__init__()
         
-        self.encoder = Encoder(dim_neck, dim_emb, freq)
-        self.decoder = Decoder(dim_neck, dim_emb, dim_pre)
+        self.encoder = Encoder(dim_neck, freq)
+        self.decoder = Decoder(dim_neck, dim_pre)
         self.postnet = Postnet()
 
-    def forward(self, x, length, c_org, c_trg):
-        """x: """
-                
-        # [batch, seq, dim_x] -> [batch, seq/freq, dim_c]
-        codes = self.encoder(x, length, c_org)
-        if c_trg is None:
-            return torch.cat(codes, dim=-1)
-        
+    def encoder_fn(self, x, length, c_org):
+        return self.encoder(x, length, c_org)
+
+    def decoder_fn(self, codes, length, c_trg):
         # [batch, seq/fre, dim_c] -> [batch, seq, dim_c]
-        
         mel_outputs = self.decoder(codes, length, c_trg)
                 
         # [batch, seq, dim_x] -> [batch, seq, dim_x]
         mel_outputs_postnet = self.postnet(mel_outputs.transpose(2,1))
         mel_outputs_postnet = mel_outputs + mel_outputs_postnet.transpose(2,1)
         
-        return mel_outputs, mel_outputs_postnet, torch.cat(codes, dim=-1)
+        return mel_outputs, mel_outputs_postnet
+
+    def forward(self, x, length, c_org, c_trg):
+        """x: """
+                
+        # [batch, seq, dim_x] -> list of [batch, dim_c]
+        codes = self.encoder_fn(x, length, c_org)
+        if c_trg is None:
+            return codes
+        
+        mel_outputs, mel_outputs_postnet = self.decoder_fn(codes, length, c_trg)
+        return mel_outputs, mel_outputs_postnet, codes
 
     

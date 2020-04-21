@@ -1,10 +1,10 @@
 #!/bin/bash
-#SBATCH --job-name=embedding
+#SBATCH --job-name=timit
 #SBATCH --account=rrg-bengioy-ad_gpu     # Yoshua pays for your job
 #SBATCH --cpus-per-task=10               # Ask for 10 CPUs
 #SBATCH --gres=gpu:1                     # Ask for 1 GPU
 #SBATCH --mem=32G                        # Ask for 32 GB of RAM
-#SBATCH --time=3:00:00                   # The job will run for 3 hours
+#SBATCH --time=12:00:00                # The job will run for 12 hours
 #SBATCH -o /scratch/nahwidon/slurm-%j.out# Write the log in $SCRATCH
 #SBATCH -e /scratch/nahwidon/slurm-%j.err# Write the err in $SCRATCH
 
@@ -14,6 +14,7 @@ echo "1: Prepare data"
 echo "2: Process data"
 echo "3: Train speech embedder"
 echo "4: Test speech embedder"
+
 skip=0
 if [[ $1 ]];then
 skip=$1
@@ -80,22 +81,24 @@ mkdir -p $SCRATCH/$JOBID
 cd $SLURM_TMPDIR
 echo "working dir: `pwd`"
 echo "output dir: $SCRATCH/$JOBID"
-rm -rf PyTorch_Speaker_Verification
 git clone $HOME/PyTorch_Speaker_Verification
-# avoid unnecessary commit
-if [[ $skip ]]; then
+if [ -z "$PS1" ]; then
+    echo This shell is not interactive
+else
+    echo This shell is interactive
     cp $HOME/PyTorch_Speaker_Verification/*.py PyTorch_Speaker_Verification
 fi
 cd PyTorch_Speaker_Verification
 
 # Step 1. Prepare data
 if [[ $skip -lt 1 ]]; then
-unzip -n $SCRATCH/TIMIT.zip -d $SLURM_TMPDIR
+    unzip -n $SCRATCH/TIMIT.zip -d $SLURM_TMPDIR
 fi
 
 # Step 2. Preprocess data
 if [[ -s $prevexp/data.tgz ]];then
     tar zxvf $prevexp/data.tgz -C $SLURM_TMPDIR
+    ln -sf $prevexp/data.tgz $SCRATCH/$JOBID/
 fi
 if [[ $skip -lt 2 ]]; then
 echo "\
@@ -122,14 +125,101 @@ echo "terminate python data_preprocess.py"
 exit $ret
 fi
 
-(cd $SLURM_TMPDIR; tar zcvf $SCRATCH/$JOBID/data.tgz train_tisv test_tisv)
+if [[ ! -s $SCRATCH/$JOBID/data.tgz ]]; then
+    (cd $SLURM_TMPDIR; tar zcvf $SCRATCH/$JOBID/data.tgz train_tisv test_tisv) &
+fi
 mv config/config.yaml "$SLURM_TMPDIR/config.data.yaml"
 
 fi
 
 # Step 2. Train speech embedder
 if [[ -s $prevexp/model.tgz ]];then
-    tar zxvf $prevexp/model.tgz -C $SLURM_TMPDIR
+    tar xvf $prevexp/model.tgz -C $SLURM_TMPDIR
+fi
+model_path="$SLURM_TMPDIR/checkpoint/ckpt_epoch_570.pth"
+if [[ -s $model_path ]]; then
+    restore=true
+else
+    restore=false
+fi
+mix=false
+style=false
+norm=1
+for i in `seq 0 1 1`; do
+    suffix="-mix"
+    if [[ $loss_type =~ ${suffix}$ ]]; then
+        echo "############ mix: true"
+        mix=true
+        # truncate suffix
+        loss_type=${loss_type%%${suffix}}
+    fi 
+    suffix="-style"
+    if [[ $loss_type =~ ${suffix}$ ]]; then
+        echo "############ style: true"
+        style=true
+        # truncate suffix
+        loss_type=${loss_type%%${suffix}}
+    fi 
+done
+
+if [[ $loss_type == "autovc" ]]; then
+    N=16 # Number of speakers in a batch
+    M=5 # Number of utterances in a batch
+    K=0 
+    pretrain_epochs=150
+elif [[ $loss_type == "autovc-v2" ]]; then
+    N=16 # Number of speakers in a batch
+    M=5 # Number of utterances in a batch
+    K=5 # Number of hallucinated samples per speaker
+    pretrain_epochs=150
+elif [[ $loss_type == "autovc-v3" ]]; then
+    N=16 # Number of speakers in a batch
+    M=5 # Number of utterances in a batch
+    K=5 # Number of hallucinated samples per speaker
+    pretrain_epochs=150
+elif [[ $loss_type == "autovc-v4" ]]; then
+    N=10 # Number of speakers in a batch
+    M=5 # Number of utterances in a batch
+    K=4 
+    pretrain_epochs=150
+elif [[ $loss_type == "autovc-v5" ]]; then
+    N=10 # Number of speakers in a batch
+    M=5 # Number of utterances in a batch
+    K=4 
+    pretrain_epochs=150
+elif [[ $loss_type == "autovc-v6" ]]; then
+    N=10 # Number of speakers in a batch
+    M=5 # Number of utterances in a batch
+    K=3 
+    pretrain_epochs=150
+elif [[ $loss_type == "autovc-v7" ]]; then
+    N=10 # Number of speakers in a batch
+    M=5 # Number of utterances in a batch
+    K=4 
+    pretrain_epochs=150
+elif [[ $loss_type == "autovc-v8" ]]; then
+    N=10 # Number of speakers in a batch
+    M=5 # Number of utterances in a batch
+    K=4 
+    pretrain_epochs=150
+elif [[ $loss_type == "manhattan" ]]; then
+    N=64 # Number of speakers in a batch
+    M=5 # Number of utterances in a batch
+    K=0 
+    pretrain_epochs=0
+    loss_type="scaled-norm"
+elif [[ $loss_type == "euclidean" ]]; then
+    N=64 # Number of speakers in a batch
+    M=5 # Number of utterances in a batch
+    K=0 
+    pretrain_epochs=0
+    loss_type="scaled-norm"
+    norm=2
+else
+    N=64 # Number of speakers in a batch
+    M=5 # Number of utterances in a batch
+    K=0 
+    pretrain_epochs=0
 fi
 if [[ $skip -lt 3 ]]; then
 echo "
@@ -138,6 +228,7 @@ device: "cuda"
 ---
 data:
     train_path: '$SLURM_TMPDIR/train_tisv'
+    test_path: '$SLURM_TMPDIR/test_tisv'
     data_preprocessed: !!bool "true" 
     sr: 16000
     nfft: 512 #For mel spectrogram preprocess
@@ -149,6 +240,7 @@ model:
     hidden: 768 #Number of LSTM hidden layer units
     num_layer: $num_layer #Number of LSTM layers
     proj: 256 #Embedding size
+    model_path: '$model_path'
 ---
 autovc:
     channel: 512 #Number of channels in Conv Layer units
@@ -157,26 +249,42 @@ autovc:
     num_enc: $num_enc #Number of LSTM layers in encoder
     dim_neck: 32 # Bottlenect dimension
     num_dec: $num_dec #Number of LSTM layers in decoder
-    dim_pre: 512 # Number of LSTM hidden layer units
+    dim_pre: 512 # Number of channels before LSTM layer in decoder
     num_post: $num_post #Number of LSTM layers in post
-    proj: 1024 # ?
-    freq: 16     # Down sample frequency
+    proj: 1024 # Number of LSTM hidden layer units
+    freq: 32     # Down sample frequency
+    mix: !!bool "$mix" # Mix the original and generated embeddings
+    style: !!bool "$style" # Mix the original and generated embeddings
+    margin: 0.0
 ---
 train:
-    N : 32 #Number of speakers in batch
-    M : 4 #Number of utterances per speaker
+    N : $N #Number of speakers in batch
+    M : $M #Number of utterances per speaker
+    K : $K #Number of transferred utterances per speaker
     num_workers: 0 #number of workers for dataloader
-    lr: 0.1
-    optimizer: SGD
+    lr: 0.0001
+    optimizer: ADAM
     momentum: 0.9
-    epochs: 550 #Max training speaker epoch 
+    epochs: 950 #Max training speaker epoch 
+    pretrain_epochs: $pretrain_epochs #Max training speaker epoch 
     log_interval: 5 #Epochs before printing progress
     log_file: '$SLURM_TMPDIR/train.log'
-    checkpoint_interval: 100 #Save model after x speaker epochs
+    checkpoint_interval: 30 #Save model after x speaker epochs
     checkpoint_dir: '$SLURM_TMPDIR/checkpoint'
-    restore: !!bool "false" #Resume training from previous model path
+    restore: !!bool "$restore" #Resume training from previous model path
     loss_type: '$loss_type'
+    norm: $norm
+    reports: 'v_intra:v_inter:dbi'
+---
+test:
+    N : 10 #Number of speakers in batch
+    M : 6 #Number of utterances per speaker
+    K : 1 #Number of support set per speaker
+    num_workers: 0 #number of workers for data laoder
+    log_interval: 0 #Epochs before printing progress
+    log_file: '$SLURM_TMPDIR/train.test.log'
 " > config/config.yaml
+cp config/config.yaml "$SLURM_TMPDIR/config.train.yaml"
 
 #(while :; do sleep 3; echo "a"; done)
 (
@@ -184,7 +292,13 @@ cd $SLURM_TMPDIR
 while : 
 do
     sleep 600 # store partial results every 10 min
-    tar zcvf $SCRATCH/$JOBID/model.tgz
+    if [[ ! -s $SCRATCH/$JOBID/model.tgz ]];then
+        tar cvf $SCRATCH/$JOBID/model.tgz checkpoint
+    else
+        tar uvf $SCRATCH/$JOBID/model.tgz checkpoint
+    fi
+    tar zcvf $SCRATCH/$JOBID/log.tgz *.log
+    tar zcvf $SCRATCH/$JOBID/config.tgz *.yaml
 done 
 ) &
 pid=$!
@@ -192,19 +306,26 @@ pid=$!
 python train_speech_embedder.py
 ret=$?
 if [[ $ret -ne 0 ]];then
-echo "terminate python train_speech_embedder.py"
-kill -9 $pid
-killall sleep
-exit $ret
+    echo "terminate python train_speech_embedder.py"
+    kill -9 $pid
+    killall sleep
+    exit $ret
 fi
 
-(cd $SLURM_TMPDIR; tar zcvf $SCRATCH/$JOBID/model.tgz checkpoint)
-mv config/config.yaml "$SLURM_TMPDIR/config.train.yaml"
+kill -9 $pid
+(cd $SLURM_TMPDIR; 
+if [[ ! -s $SCRATCH/$JOBID/model.tgz ]];then
+    tar cvf $SCRATCH/$JOBID/model.tgz checkpoint
+else
+    tar uvf $SCRATCH/$JOBID/model.tgz checkpoint
+fi
+) &
+pid=$!
 fi
 
 # Step 3. Test speech embedder
 if [[ $skip < 4 ]];then
-for K in 5 1; do
+for testK in 5 1; do
 
 echo "
 training: !!bool "false"
@@ -223,26 +344,45 @@ model:
     hidden: 768 #Number of LSTM hidden layer units
     num_layer: $num_layer #Number of LSTM layers
     proj: 256 #Embedding size
-    model_path: '$SLURM_TMPDIR/checkpoint/final_epoch_550.model'
+    model_path: '$SLURM_TMPDIR/checkpoint/final_epoch_950.model'
+    # model_path: '$model_path'
+---
+autovc:
+    channel: 512 #Number of channels in Conv Layer units
+    kernel: 5 #Kernel size in Conv Layer units
+    num_conv: $num_conv #Number of Conv layers
+    num_enc: $num_enc #Number of LSTM layers in encoder
+    dim_neck: 32 # Bottlenect dimension
+    num_dec: $num_dec #Number of LSTM layers in decoder
+    dim_pre: 512 # Number of channels before LSTM layer in decoder
+    num_post: $num_post #Number of LSTM layers in post
+    proj: 1024 # Number of LSTM hidden layer units
+    freq: 32     # Down sample frequency
 ---
 train:
     loss_type: '$loss_type'
+    K : 5 #Number of transferred utterances per speaker
+    norm: $norm
+    reports: 'v_intra:v_inter:dbi'
 ---
 test:
     N : 10 #Number of speakers in batch
-    M : $(($K + 5)) #Number of utterances per speaker
-    K : $K #Number of support set per speaker
+    M : $(($testK + $M)) #Number of utterances per speaker
+    K : $testK #Number of support set per speaker
     num_workers: 0 #number of workers for data laoder
     epochs: 10 #testing speaker epochs
-    log_interval: 1 #Epochs before printing progress
-    log_file: '$SLURM_TMPDIR/test.K$K.log'
+    log_interval: 5 #Epochs before printing progress
+    log_file: '$SLURM_TMPDIR/test.K$testK.log'
 " > config/config.yaml
+cp config/config.yaml "$SLURM_TMPDIR/config.test.K$testK.yaml"
 
 python train_speech_embedder.py
-mv config/config.yaml "$SLURM_TMPDIR/config.test.K$K.yaml"
 done
 
 fi
 
 (cd $SLURM_TMPDIR; tar zcvf $SCRATCH/$JOBID/log.tgz *.log) 
 (cd $SLURM_TMPDIR; tar zcvf $SCRATCH/$JOBID/config.tgz *.yaml) 
+if [[ $pid ]]; then
+    wait $pid
+fi

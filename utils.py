@@ -159,7 +159,7 @@ def calc_contrast_loss(sim_matrix):
     loss = per_embedding_loss.mean()
     return loss, per_embedding_loss
 
-def get_distance_forall(embeddings, centroids):
+def get_distance_forall(embeddings, centroids, p=2):
     # shape(embeddings) = [n_spk, n_utt, n_dim]
     # shape(centroids) = [n_spk, n_dim]
     n_spk = embeddings.shape[0]
@@ -182,11 +182,12 @@ def get_distance_forall(embeddings, centroids):
     embeddings_expand = embeddings_expand.view(n_spk*n_utt*n_cls, n_dim)
     centroids_expand = centroids_expand.view(n_spk*n_utt*n_cls, n_dim)
     # d_all.shape = (n_spk, n_utt, n_spk)
-    d_all = torch.norm(embeddings_expand-centroids_expand, dim=1).pow(2)
+    diff = embeddings_expand - centroids_expand
+    d_all = torch.norm(diff, p=p, dim=1).pow(p)
     d_all = d_all.view(n_spk, n_utt, n_cls)
     return d_all
 
-def get_distance(embeddings, centroids):
+def get_distance(embeddings, centroids, p=2):
     # shape(embeddings) = [n_spk, n_utt, n_dim]
     # shape(centroids) = [n_spk, n_dim]
     n_spk = embeddings.shape[0]
@@ -196,26 +197,25 @@ def get_distance(embeddings, centroids):
     utterance_centroids = get_utterance_centroids(embeddings)
 
     # flatten the embeddings and utterance centroids to just utterance,
-    # so we can do cosine similarity
     # utterance_centroids.shape = (n_spk*n_utt, n_dim)
     utterance_centroids_flat = utterance_centroids.view(n_spk*n_utt, n_dim)
     # embeddings_flat.shape = (n_spk*n_utt, n_dim)
     embeddings_flat = embeddings.view(n_spk*n_utt, n_dim)
-    # the euclidean distance between utterance and the associated centroids
+    # the distance between utterance and the associated centroids
     # for that utterance
     # this is each speaker's utterances against his own centroid, but each
     # comparison centroid has the current utterance removed
-    # cos_same.shape = (n_spk, n_utt)
-    diff = embeddings_flat-utterance_centroids_flat
-    d_same = torch.norm(diff, dim=1).pow(2)
+    # d_same.shape = (n_spk, n_utt)
+    diff = embeddings_flat - utterance_centroids_flat
+    d_same = torch.norm(diff, p=p, dim=1).pow(p)
 
-    d_all = get_distance_forall(embeddings, centroids)
-    # assign the euclidean distance for same speakers to the proper idx
+    d_all = get_distance_forall(embeddings, centroids, p)
+    # assign the distance for same speakers to the proper idx
     same_idx = list(range(n_spk))
     d_all[same_idx, :, same_idx] = d_same.view(n_spk, n_utt)
     return d_all
 
-def calc_loss_euclidean(d_matrix):
+def calc_loss_distance(d_matrix):
     n_spk = d_matrix.shape[0]
     same_idx = list(range(n_spk))
     pos = d_matrix[same_idx, :, same_idx]

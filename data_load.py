@@ -80,15 +80,11 @@ class SpeakerDatasetTIMITPreprocessed(Dataset):
 
 class SpeakerDatasetSpectrogram(Dataset):
     
-    def __init__(self, shuffle=True, utter_start=0, pad_token=0):
+    def __init__(self, M, path, shuffle=True, utter_start=0, pad_token=0):
         
         # data path
-        if hp.training:
-            self.path = hp.data.train_path
-            self.utter_num = hp.train.M
-        else:
-            self.path = hp.data.test_path
-            self.utter_num = hp.test.M
+        self.path = path
+        self.utter_num = M
         self.spk_list = os.listdir(self.path)
         self.shuffle=shuffle
         self.utter_start = utter_start
